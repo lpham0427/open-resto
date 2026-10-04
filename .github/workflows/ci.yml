@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: Lint, type-check and test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      # setup-uv no longer publishes floating major tags (last one is v7),
+      # so it is pinned to an exact release. Dependabot keeps it up to date.
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10.2.0
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Ruff lint
+        run: uv run --frozen ruff check .
+
+      - name: Ruff format check
+        run: uv run --frozen ruff format --check .
+
+      - name: Type check
+        run: uv run --frozen ty check
+
+      - name: Run tests
+        run: uv run --frozen pytest

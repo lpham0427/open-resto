@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# uv / virtual environments
+.venv/
+
+# Tool caches and coverage
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# AWS SAM
+.aws-sam/
+# Generated right before "sam build" with "uv export"; never commit it.
+src/requirements.txt
+
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+*.pem
+
+# Evaluation raw data
+evals/raw/
+
+# Editors and OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
