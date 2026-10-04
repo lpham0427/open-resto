@@ -1,0 +1,54 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  OpenResto - GitHub Actions OIDC Provider and Deployment IAM Role.
+  Deploy this stack once in your AWS account to allow GitHub Actions to
+  deploy the application without storing long-lived AWS credentials.
+
+Parameters:
+  GitHubOrg:
+    Type: String
+    Default: lpham0427
+    Description: GitHub organization or username owning the repository.
+
+  RepositoryName:
+    Type: String
+    Default: open-resto
+    Description: GitHub repository name.
+
+Resources:
+  GitHubOIDCProvider:
+    Type: AWS::IAM::OIDCProvider
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+      ClientIdList:
+        - sts.amazonaws.com
+      ThumbprintList:
+        # Standard GitHub Actions OIDC thumbprints
+        - 6938fd4d98bab03faadb97b34396831e3780aea1
+        - 1c587612c6c5f7366a5e45a6da803a375e3c7a7e
+
+  GitHubActionsDeploymentRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: OpenRestoGitHubActionsDeploymentRole
+      Description: IAM role assumed by GitHub Actions to deploy OpenResto via SAM.
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Ref GitHubOIDCProvider
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+              StringLike:
+                token.actions.githubusercontent.com:sub: !Sub "repo:${GitHubOrg}/${RepositoryName}:ref:refs/heads/main"
+      ManagedPolicyArns:
+        # Grants permissions needed to manage CloudFormation, Lambda, SQS, IAM roles and S3 build buckets.
+        - arn:aws:iam::aws:policy/AdministratorAccess
+
+Outputs:
+  RoleArn:
+    Description: Add this ARN to your GitHub Repository Secrets or Variables as AWS_ROLE_ARN.
+    Value: !GetAtt GitHubActionsDeploymentRole.Arn
