@@ -2,4 +2,139 @@ AWSTemplateFormatVersion: "2010-09-09"
 Transform: AWS::Serverless-2016-10-31
 Description: OpenResto - Order intake system for a family rice restaurant via Zalo, serverless on AWS
 
-# Resources (functions, queues, tables, schedules) will be added later.
+Parameters:
+  ZaloAppId:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /open-resto/zalo/app-id
+    Description: >-
+      Name of an SSM String parameter holding the Zalo app ID (not a secret).
+      CloudFormation resolves its value at deploy time.
+
+  ZaloOaSecretKeyParameterName:
+    Type: String
+    Default: /open-resto/zalo/oa-secret-key
+    AllowedPattern: ^/.+
+    Description: >-
+      Name (not value) of an SSM SecureString parameter holding the Zalo OA secret key.
+      The webhook function reads and caches it at runtime, so the secret never
+      appears in the template, the stack parameters or the Lambda configuration.
+
+  LogRetentionInDays:
+    Type: Number
+    Default: 30
+    AllowedValues: [1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365]
+    Description: CloudWatch Logs retention for all functions.
+
+Globals:
+  Function:
+    Runtime: python3.14
+    CodeUri: src/
+    MemorySize: 256
+
+Resources:
+  # ---------------------------------------------------------------------------
+  # Queues
+  # ---------------------------------------------------------------------------
+  ZaloEventsQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      SqsManagedSseEnabled: true
+      MessageRetentionPeriod: 345600 # 4 days
+      # AWS recommends at least 6x the consumer function timeout (30 s).
+      VisibilityTimeout: 180
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt ZaloEventsDLQ.Arn
+        # AWS recommends at least 5 so throttled batches are not dead-lettered early.
+        maxReceiveCount: 5
+
+  ZaloEventsDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      SqsManagedSseEnabled: true
+      # Must outlive the source queue: a message keeps its original enqueue
+      # timestamp when it is moved to a standard DLQ.
+      MessageRetentionPeriod: 1209600 # 14 days (maximum)
+
+  # ---------------------------------------------------------------------------
+  # Webhook: Zalo OA -> Function URL -> verify signature -> enqueue -> 200 OK
+  # ---------------------------------------------------------------------------
+  ZaloWebhookFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Description: Receives Zalo OA webhook events, verifies them and enqueues them.
+      Handler: api.app.lambda_handler
+      # Zalo expects a response within 2 s. Speed comes from keeping the handler
+      # small; this timeout only caps runaway invocations. It is deliberately
+      # above 2 s so a slow invocation still finishes enqueuing instead of being
+      # killed and losing the event (Zalo only retries when it cannot connect).
+      Timeout: 10
+      FunctionUrlConfig:
+        # Public endpoint; requests are authenticated by X-ZEvent-Signature.
+        AuthType: NONE
+      LoggingConfig:
+        LogGroup: !Ref ZaloWebhookLogGroup
+      Environment:
+        Variables:
+          ZALO_APP_ID: !Ref ZaloAppId
+          ZALO_OA_SECRET_KEY_PARAMETER: !Ref ZaloOaSecretKeyParameterName
+          EVENTS_QUEUE_URL: !Ref ZaloEventsQueue
+      Policies:
+        - SQSSendMessagePolicy:
+            QueueName: !GetAtt ZaloEventsQueue.QueueName
+        - Statement:
+            - Sid: ReadZaloOaSecretKey
+              Effect: Allow
+              Action: ssm:GetParameter
+              Resource: !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${ZaloOaSecretKeyParameterName}
+            - Sid: DecryptSecureStringViaSsm
+              Effect: Allow
+              Action: kms:Decrypt
+              Resource: "*"
+              Condition:
+                StringEquals:
+                  kms:ViaService: !Sub ssm.${AWS::Region}.amazonaws.com
+
+  ZaloWebhookLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      RetentionInDays: !Ref LogRetentionInDays
+
+  # ---------------------------------------------------------------------------
+  # Worker: SQS -> process Zalo events
+  # ---------------------------------------------------------------------------
+  ZaloWorkerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Description: Consumes Zalo events from SQS and processes them.
+      Handler: worker.app.lambda_handler
+      Timeout: 30
+      LoggingConfig:
+        LogGroup: !Ref ZaloWorkerLogGroup
+      Events:
+        ZaloEvents:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt ZaloEventsQueue.Arn
+            BatchSize: 10
+            # The handler must return {"batchItemFailures": [{"itemIdentifier": <messageId>}]}
+            # so only failed messages are retried, not the whole batch.
+            FunctionResponseTypes:
+              - ReportBatchItemFailures
+
+  ZaloWorkerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      RetentionInDays: !Ref LogRetentionInDays
+
+Outputs:
+  ZaloWebhookUrl:
+    Description: Paste this URL into the Zalo app settings as the webhook URL.
+    Value: !GetAtt ZaloWebhookFunctionUrl.FunctionUrl
+
+  ZaloEventsQueueUrl:
+    Description: URL of the Zalo events queue.
+    Value: !Ref ZaloEventsQueue
+
+  ZaloEventsDLQUrl:
+    Description: URL of the dead-letter queue; inspect it when events fail repeatedly.
+    Value: !Ref ZaloEventsDLQ
