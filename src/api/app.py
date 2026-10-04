@@ -141,31 +141,30 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     freshness_status = evaluate_freshness(
         candidate.occurred_at, now_utc=received_at_utc
     )
-    if freshness_status != WebhookFreshnessStatus.FRESH:
-        if freshness_status == WebhookFreshnessStatus.EXPIRED:
-            # An expired event can never become fresh again. Acknowledge with 200 OK
-            # so Zalo does not endlessly retry a request that will always be rejected.
-            logger.info(
-                "Event expired (%s). Acknowledged with 200 OK. RequestId: %s",
-                candidate.timestamp,
-                request_id,
-            )
-            return _response(
-                200,
-                {"status": "ok", "message": "Expired event acknowledged"},
-            )
+    if freshness_status == WebhookFreshnessStatus.EXPIRED:
+        # An expired event can never become fresh again. Acknowledge with 200 OK
+        # so Zalo does not endlessly retry a request that will always be rejected.
+        logger.info(
+            "Event expired (%s). Acknowledged with 200 OK. RequestId: %s",
+            candidate.timestamp,
+            request_id,
+        )
+        return _response(
+            200,
+            {"status": "ok", "message": "Expired event acknowledged"},
+        )
 
-        if freshness_status == WebhookFreshnessStatus.FUTURE_DATED:
-            # Treat clock skew as a transient error; 503 forces Zalo redelivery.
-            logger.warning(
-                "Event future-dated (%s). Returning 503. RequestId: %s",
-                candidate.timestamp,
-                request_id,
-            )
-            return _response(
-                503,
-                {"error": "Future-dated event; temporary clock skew"},
-            )
+    if freshness_status == WebhookFreshnessStatus.FUTURE_DATED:
+        # Treat clock skew as a transient error; 503 forces Zalo redelivery.
+        logger.warning(
+            "Event future-dated (%s). Returning 503. RequestId: %s",
+            candidate.timestamp,
+            request_id,
+        )
+        return _response(
+            503,
+            {"error": "Future-dated event; temporary clock skew"},
+        )
 
     # Step: fail-fast timeout check (500ms safety buffer before hard kill)
     current_remaining_ms = _get_remaining_ms(context)
