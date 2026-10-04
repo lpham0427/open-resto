@@ -43,7 +43,11 @@ Resources:
               StringEquals:
                 token.actions.githubusercontent.com:aud: sts.amazonaws.com
               StringLike:
-                token.actions.githubusercontent.com:sub: !Sub "repo:${GitHubOrg}/${RepositoryName}:ref:refs/heads/main"
+                token.actions.githubusercontent.com:sub:
+                  # Classic format: repo:org/repo:ref:refs/heads/main
+                  - !Sub "repo:${GitHubOrg}/${RepositoryName}:ref:refs/heads/main"
+                  # 2026 immutable ID format: repo:org@orgId/repo@repoId:ref:refs/heads/main
+                  - !Sub "repo:${GitHubOrg}*/*${RepositoryName}*:ref:refs/heads/main"
       ManagedPolicyArns:
         # Grants permissions needed to manage CloudFormation, Lambda, SQS, IAM roles and S3 build buckets.
         - arn:aws:iam::aws:policy/AdministratorAccess
