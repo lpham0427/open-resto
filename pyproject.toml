@@ -1,0 +1,40 @@
+[project]
+name = "open-resto"
+version = "0.1.0"
+description = "Order intake system for a family rice restaurant via Zalo, serverless on AWS"
+readme = "README.md"
+requires-python = ">=3.14"
+# Runtime dependencies shipped to AWS Lambda. Do not add boto3 here:
+# the Lambda Python runtime already provides it.
+dependencies = []
+
+[tool.uv]
+# This repository is an application deployed with AWS SAM, not an installable package.
+package = false
+
+[tool.ruff]
+src = ["src"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "C4", "PT", "RUF", "S"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["S101"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-ra --strict-markers --strict-config"
+
+[tool.ty.environment]
+root = ["src"]
+
+[dependency-groups]
+dev = [
+    "boto3>=1.43.108",
+    "moto>=5.2.3",
+    "prek>=0.5.4",
+    "pytest>=9.1.1",
+    "ruff>=0.16.10",
+    "ty>=0.0.84",
+]

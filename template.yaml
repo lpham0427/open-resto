@@ -1,0 +1,5 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: OpenResto - Order intake system for a family rice restaurant via Zalo, serverless on AWS
+
+# Resources (functions, queues, tables, schedules) will be added later.
