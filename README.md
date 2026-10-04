@@ -121,8 +121,17 @@ Workflow:
 
 ## Deployment
 
-Planned: deployment with AWS SAM via GitHub Actions on merge to `main`.
-No deployment workflow exists yet.
+Automatic deployment is configured via GitHub Actions (`.github/workflows/deploy.yml`) on merge to `main`.
+
+### AWS OIDC Setup (One-time)
+1. Deploy the CloudFormation template in `docs/infrastructure/github-oidc-role.yaml` to your AWS account.
+2. In GitHub repository **Settings > Secrets and variables > Actions**, add:
+   - `AWS_ROLE_ARN` (Secret/Variable): ARN of the created deployment role (e.g. `arn:aws:iam::<ACCOUNT_ID>:role/OpenRestoGitHubActionsDeploymentRole`).
+   - `AWS_REGION` (Variable): Deployment region (e.g. `ap-southeast-1`, defaults to `ap-southeast-1`).
+   - `SAM_STACK_NAME` (Variable): CloudFormation stack name (e.g. `open-resto-prod`, defaults to `open-resto-prod`).
+3. Ensure the SSM parameters exist in your target AWS region:
+   - `/open-resto/zalo/app-id` (Type: `String`)
+   - `/open-resto/zalo/oa-secret-key` (Type: `SecureString`)
 
 ## Documentation
 
