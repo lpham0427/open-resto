@@ -18,7 +18,13 @@ logger.setLevel(logging.INFO)
 
 
 def _response(status_code: int, body_data: dict[str, Any]) -> dict[str, Any]:
-    """Helper to build standardized Lambda Function URL response."""
+    """Helper to build standardized Lambda Function URL response (Payload format 2.0).
+
+    AWS Lambda Function URLs require custom HTTP responses to follow API Gateway
+    Payload Format Version 2.0 (`statusCode`, `headers`, and `body` as a string).
+    Reference:
+        https://docs.aws.amazon.com/lambda/latest/dg/urls-invocation.html#urls-payloads
+    """
     return {
         "statusCode": status_code,
         "headers": {"Content-Type": "application/json"},
