@@ -8,6 +8,7 @@ from typing import Any
 
 from api.envelope import ZaloWebhookEnvelope
 from api.freshness import WebhookFreshnessStatus, evaluate_freshness
+from api.parser import parse_candidate
 from api.signature import verify_signature
 from shared.settings import (
     get_events_queue_url,
@@ -59,11 +60,11 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     """Process incoming Zalo Webhook requests.
 
     1. Method check: POST only (RFC 9110 compliant with Allow header).
-    2. Body parsing and payload validation.
+    2. Strict parsing & structural validation (duplicate-key rejection, bounded fields).
     3. Cryptographic signature verification using X-ZEvent-Signature.
     4. Freshness evaluation to prevent replay attacks and handle clock skew.
     5. Fail-fast timeout check (500ms safety buffer before AWS hard kill).
-    6. Packaging into ZaloWebhookEnvelope and enqueuing to SQS.
+    6. Packaging into ZaloWebhookEnvelope and enqueuing to SQS with bounded latency.
     7. Return 200 OK within Zalo's SLA.
     """
     received_at_utc = datetime.now(tz=UTC)
@@ -84,7 +85,7 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             extra_headers={"Allow": "POST"},
         )
 
-    # Step: parse body
+    # Step: extract raw body
     raw_body = event.get("body", "")
     if event.get("isBase64Encoded", False):
         try:
@@ -96,29 +97,26 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     if not raw_body:
         return _response(400, {"error": "Empty body"})
 
-    try:
-        payload = json.loads(raw_body)
-    except json.JSONDecodeError:
-        logger.warning("Failed to parse JSON body. RequestId: %s", request_id)
-        return _response(400, {"error": "Invalid JSON body"})
-
-    if not isinstance(payload, dict):
-        logger.warning("Payload is not a JSON object. RequestId: %s", request_id)
-        return _response(400, {"error": "Invalid JSON body, expected object"})
-
-    app_id = str(payload.get("app_id") or get_zalo_app_id())
-    timestamp = str(payload.get("timestamp") or payload.get("timeStamp") or "")
-
-    if not app_id or not timestamp:
-        logger.warning(
-            "Missing app_id or timestamp in payload. RequestId: %s", request_id
-        )
-        return _response(400, {"error": "Missing app_id or timestamp"})
-
-    # Step: verify signature
+    # Step: parse & validate candidate (header keys normalized to lowercase)
     headers = {k.lower(): v for k, v in event.get("headers", {}).items()}
-    signature_header = headers.get("x-zevent-signature")
+    candidate, validation_errors = parse_candidate(headers, raw_body)
 
+    if validation_errors or candidate is None:
+        flat_errors = "; ".join(
+            f"{k}: {', '.join(v)}" for k, v in validation_errors.items()
+        )
+        logger.warning(
+            "Can't parse Zalo webhook candidate. Errors: %s. RequestId: %s",
+            flat_errors,
+            request_id,
+        )
+        return _response(
+            400,
+            {"error": "Validation failed", "details": validation_errors},
+        )
+
+    # Step: verify signature against trusted configured app_id
+    trusted_app_id = get_zalo_app_id()
     try:
         oa_secret_key = get_oa_secret_key()
     except Exception:
@@ -129,14 +127,19 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         return _response(500, {"error": "Internal configuration error"})
 
     if not verify_signature(
-        app_id, raw_body, timestamp, oa_secret_key, signature_header
+        claimed_app_id=candidate.app_id,
+        trusted_app_id=trusted_app_id,
+        raw_body=raw_body,
+        timestamp=candidate.timestamp,
+        secret_key=oa_secret_key,
+        signature=candidate.signature,
     ):
         logger.warning("Rejected: invalid signature. RequestId: %s", request_id)
         return _response(401, {"error": "Invalid signature"})
 
     # Step: freshness evaluation (replay protection and clock skew)
-    freshness_status, occurred_at = evaluate_freshness(
-        timestamp, now_utc=received_at_utc
+    freshness_status = evaluate_freshness(
+        candidate.occurred_at, now_utc=received_at_utc
     )
     if freshness_status != WebhookFreshnessStatus.FRESH:
         if freshness_status == WebhookFreshnessStatus.EXPIRED:
@@ -144,7 +147,7 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             # so Zalo does not endlessly retry a request that will always be rejected.
             logger.info(
                 "Event expired (%s). Acknowledged with 200 OK. RequestId: %s",
-                timestamp,
+                candidate.timestamp,
                 request_id,
             )
             return _response(
@@ -156,7 +159,7 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             # Treat clock skew as a transient error; 503 forces Zalo redelivery.
             logger.warning(
                 "Event future-dated (%s). Returning 503. RequestId: %s",
-                timestamp,
+                candidate.timestamp,
                 request_id,
             )
             return _response(
@@ -164,7 +167,7 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
                 {"error": "Future-dated event; temporary clock skew"},
             )
 
-    # Step: fail-fast timeout check
+    # Step: fail-fast timeout check (500ms safety buffer before hard kill)
     current_remaining_ms = _get_remaining_ms(context)
     if current_remaining_ms is not None and current_remaining_ms <= SQS_GRACE_PERIOD_MS:
         logger.warning(
@@ -183,11 +186,10 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     envelope = ZaloWebhookEnvelope.create(
         request_id=request_id,
         received_at=received_at_utc,
-        occurred_at=occurred_at,
+        occurred_at=candidate.occurred_at,
         raw_payload=raw_body,
     )
     envelope_json = envelope.to_json()
-    event_name = str(payload.get("event_name", "unknown"))
 
     try:
         sqs_client = get_sqs_client()
@@ -195,8 +197,14 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             QueueUrl=queue_url,
             MessageBody=envelope_json,
             MessageAttributes={
-                "event_name": {"DataType": "String", "StringValue": event_name},
-                "app_id": {"DataType": "String", "StringValue": app_id},
+                "event_name": {
+                    "DataType": "String",
+                    "StringValue": candidate.event_name,
+                },
+                "app_id": {
+                    "DataType": "String",
+                    "StringValue": candidate.app_id,
+                },
             },
         )
     except Exception:
@@ -207,6 +215,8 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         return _response(503, {"error": "Service Unavailable - Enqueue failed"})
 
     logger.info(
-        "Successfully enqueued event: %s. RequestId: %s", event_name, request_id
+        "Successfully enqueued event: %s. RequestId: %s",
+        candidate.event_name,
+        request_id,
     )
     return _response(200, {"status": "ok", "message": "ACK"})

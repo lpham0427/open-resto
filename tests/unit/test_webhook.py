@@ -12,7 +12,7 @@ import pytest
 from moto import mock_aws
 
 from api.app import lambda_handler
-from api.signature import calculate_signature
+from api.signature import compute_signature
 from shared.settings import (
     clear_secret_cache,
     get_oa_secret_key,
@@ -116,14 +116,14 @@ def test_webhook_success_enqueues_envelope(
 
     payload = _make_fresh_payload()
     raw_body = json.dumps(payload, separators=(",", ":"))
-    sig = calculate_signature(
+    sig = compute_signature(
         TEST_APP_ID, raw_body, payload["timestamp"], TEST_SECRET_KEY
-    )
+    ).hex()
 
     event = _build_furl_event(
         body=raw_body,
         method="POST",
-        signature_header=f"mac = {sig}",
+        signature_header=f"mac={sig}",
         request_id="req-abc-999",
     )
 
@@ -159,9 +159,9 @@ def test_webhook_base64_encoded_body(
 ) -> None:
     payload = _make_fresh_payload()
     raw_body = json.dumps(payload, separators=(",", ":"))
-    sig = calculate_signature(
+    sig = compute_signature(
         TEST_APP_ID, raw_body, payload["timestamp"], TEST_SECRET_KEY
-    )
+    ).hex()
     b64_body = base64.b64encode(raw_body.encode("utf-8")).decode("utf-8")
 
     event = _build_furl_event(
@@ -191,12 +191,12 @@ def test_webhook_expired_event_acknowledged_with_200(
     sqs = test_infrastructure["sqs"]
     queue_url = test_infrastructure["queue_url"]
 
-    # 3 hours ago (> 1 hour threshold)
-    payload = _make_fresh_payload(seconds_ago=3 * 3600)
+    # 70 minutes ago (> 65 min threshold)
+    payload = _make_fresh_payload(seconds_ago=70 * 60)
     raw_body = json.dumps(payload)
-    sig = calculate_signature(
+    sig = compute_signature(
         TEST_APP_ID, raw_body, payload["timestamp"], TEST_SECRET_KEY
-    )
+    ).hex()
     event = _build_furl_event(body=raw_body, method="POST", signature_header=sig)
 
     response = lambda_handler(event, None)
@@ -215,12 +215,12 @@ def test_webhook_future_dated_event_returns_503(
     sqs = test_infrastructure["sqs"]
     queue_url = test_infrastructure["queue_url"]
 
-    # 10 minutes in future (> 60s skew tolerance)
-    payload = _make_fresh_payload(seconds_ago=-600)
+    # 2 days in future (> 1 day skew tolerance)
+    payload = _make_fresh_payload(seconds_ago=-2 * 86400)
     raw_body = json.dumps(payload)
-    sig = calculate_signature(
+    sig = compute_signature(
         TEST_APP_ID, raw_body, payload["timestamp"], TEST_SECRET_KEY
-    )
+    ).hex()
     event = _build_furl_event(body=raw_body, method="POST", signature_header=sig)
 
     response = lambda_handler(event, None)
@@ -236,9 +236,9 @@ def test_webhook_fail_fast_on_low_remaining_time(
 ) -> None:
     payload = _make_fresh_payload()
     raw_body = json.dumps(payload)
-    sig = calculate_signature(
+    sig = compute_signature(
         TEST_APP_ID, raw_body, payload["timestamp"], TEST_SECRET_KEY
-    )
+    ).hex()
     event = _build_furl_event(body=raw_body, method="POST", signature_header=sig)
 
     mock_context = MagicMock()
@@ -274,7 +274,7 @@ def test_webhook_missing_required_fields(
     event = _build_furl_event(body=raw_body, method="POST")
     response = lambda_handler(event, None)
     assert response["statusCode"] == 400
-    assert "Missing" in json.loads(response["body"])["error"]
+    assert "Validation failed" in json.loads(response["body"])["error"]
 
 
 def test_webhook_invalid_signature(test_infrastructure: dict[str, Any]) -> None:
@@ -283,10 +283,11 @@ def test_webhook_invalid_signature(test_infrastructure: dict[str, Any]) -> None:
 
     payload = _make_fresh_payload()
     raw_body = json.dumps(payload)
+    fake_sig = "b" * 64
     event = _build_furl_event(
         body=raw_body,
         method="POST",
-        signature_header="mac=invalid_signature_hex",
+        signature_header=f"mac={fake_sig}",
     )
 
     response = lambda_handler(event, None)
@@ -305,7 +306,8 @@ def test_webhook_missing_signature_header(
     event = _build_furl_event(body=raw_body, method="POST", signature_header=None)
 
     response = lambda_handler(event, None)
-    assert response["statusCode"] == 401
+    assert response["statusCode"] == 400
+    assert "Validation failed" in json.loads(response["body"])["error"]
 
 
 def test_secret_caching_across_invocations(
@@ -327,9 +329,9 @@ def test_webhook_queue_error_returns_503(
 ) -> None:
     payload = _make_fresh_payload()
     raw_body = json.dumps(payload)
-    sig = calculate_signature(
+    sig = compute_signature(
         TEST_APP_ID, raw_body, payload["timestamp"], TEST_SECRET_KEY
-    )
+    ).hex()
     event = _build_furl_event(body=raw_body, method="POST", signature_header=sig)
 
     with patch("api.app.get_sqs_client") as mock_sqs:

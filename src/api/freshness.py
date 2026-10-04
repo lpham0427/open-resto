@@ -1,14 +1,16 @@
 """Webhook freshness policy to protect against replay attacks and clock skew."""
 
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 
 logger = logging.getLogger(__name__)
 
-# Default policy thresholds
-DEFAULT_MAX_AGE_SECONDS = 3600  # 1 hour max age for incoming events
-DEFAULT_MAX_FUTURE_SKEW_SECONDS = 60  # 60 seconds tolerance for clock skew
+# Zalo redelivers failed events after 30s, 5m, 15m, 30m and 1h. The window must
+# outlive the last retry (1h) or legitimate redeliveries would be discarded.
+MAX_AGE = timedelta(minutes=65)
+# Events dated further in the future than this are treated as clock skew.
+MAX_FUTURE_SKEW = timedelta(days=1)
 
 
 class WebhookFreshnessStatus(StrEnum):
@@ -19,46 +21,31 @@ class WebhookFreshnessStatus(StrEnum):
     FUTURE_DATED = "FUTURE_DATED"
 
 
-def parse_timestamp_to_datetime(timestamp_raw: str | int | float) -> datetime | None:
-    """Parse raw timestamp (seconds or milliseconds) into UTC datetime."""
-    try:
-        ts_val = float(timestamp_raw)
-    except ValueError, TypeError:
-        return None
-
-    # Epoch milliseconds check (e.g. 13-digit timestamp > 1e11)
-    if ts_val > 100_000_000_000:
-        ts_val /= 1000.0
-
-    try:
-        return datetime.fromtimestamp(ts_val, tz=UTC)
-    except OverflowError, OSError, ValueError:
-        return None
-
-
 def evaluate_freshness(
-    timestamp_raw: str | int | float,
+    occurred_at: datetime,
     now_utc: datetime | None = None,
-    max_age_seconds: int = DEFAULT_MAX_AGE_SECONDS,
-    max_future_skew_seconds: int = DEFAULT_MAX_FUTURE_SKEW_SECONDS,
-) -> tuple[WebhookFreshnessStatus, datetime | None]:
-    """Evaluate whether an event timestamp is fresh, expired, or future-dated.
-
-    Returns:
-        (WebhookFreshnessStatus, occurred_at_datetime)
-    """
-    occurred_at = parse_timestamp_to_datetime(timestamp_raw)
-    if occurred_at is None:
-        logger.warning("Unparseable webhook timestamp: %s", timestamp_raw)
-        return WebhookFreshnessStatus.EXPIRED, None
-
+    max_age: timedelta = MAX_AGE,
+    max_future_skew: timedelta = MAX_FUTURE_SKEW,
+) -> WebhookFreshnessStatus:
+    """Classify an authenticated event timestamp as fresh, expired or future-dated."""
     now = now_utc or datetime.now(tz=UTC)
-    delta_seconds = (now - occurred_at).total_seconds()
 
-    if delta_seconds > max_age_seconds:
-        return WebhookFreshnessStatus.EXPIRED, occurred_at
+    if occurred_at < now - max_age:
+        logger.warning(
+            "Authenticated webhook expired. occurred_at=%s now=%s max_age=%s",
+            occurred_at,
+            now,
+            max_age,
+        )
+        return WebhookFreshnessStatus.EXPIRED
 
-    if delta_seconds < -max_future_skew_seconds:
-        return WebhookFreshnessStatus.FUTURE_DATED, occurred_at
+    if occurred_at > now + max_future_skew:
+        logger.warning(
+            "Authenticated webhook is future-dated. occurred_at=%s now=%s skew=%s",
+            occurred_at,
+            now,
+            max_future_skew,
+        )
+        return WebhookFreshnessStatus.FUTURE_DATED
 
-    return WebhookFreshnessStatus.FRESH, occurred_at
+    return WebhookFreshnessStatus.FRESH

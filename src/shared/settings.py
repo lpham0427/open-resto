@@ -7,6 +7,7 @@ import os
 from typing import Any
 
 import boto3
+from botocore.config import Config
 
 _cached_secret: str | None = None
 
@@ -36,8 +37,21 @@ def get_ssm_client() -> Any:
 
 @functools.lru_cache(maxsize=1)
 def get_sqs_client() -> Any:
-    """Return a cached boto3 SQS client."""
-    return boto3.client("sqs")
+    """Return a cached boto3 SQS client with bounded latency.
+
+    Zalo expects a response within 2 seconds. boto3 cannot cancel a single call
+    like a .NET CancellationToken, so timeouts are bounded on the client and
+    retries are disabled: the worst case is ~1.5 s, after which the handler
+    returns 503 and lets Zalo redeliver.
+    """
+    return boto3.client(
+        "sqs",
+        config=Config(
+            connect_timeout=0.5,
+            read_timeout=1.0,
+            retries={"max_attempts": 1, "mode": "standard"},
+        ),
+    )
 
 
 def get_oa_secret_key(ssm_client: Any = None) -> str:
