@@ -28,13 +28,17 @@ db/migrations/    Database migrations (planned, empty)
 docs/             Architecture notes and decision records
 docs/adr/         Architecture Decision Records (Nygard format)
 evals/            Evaluation suites and data (planned, empty)
-src/              Lambda source code; each subdirectory is an importable package
-src/api/          HTTP entry point (placeholder)
-src/worker/       Queue consumer entry point (placeholder)
-src/tokens/       Scheduled maintenance entry point (placeholder)
-src/shared/       Code shared by all functions, such as settings (placeholder)
+events/           Sample events for local invocation (sam local invoke)
+functions/        Lambda function packages (each directory is an independent function)
+  receive_zalo_event/  Webhook intake API (verifies HMAC, publishes to SQS FIFO)
+  process_order/       Background order processor (consumes SQS FIFO queue)
+  refresh_token/       OAuth token rotation entry point (scheduled maintenance)
+shared/           Shared code packaged into functions at build time (e.g. envelope.py)
 tests/unit/       Unit tests
 web/              Web front end (planned, empty)
+Makefile          Custom build recipes for SAM packaging (Metadata: BuildMethod: makefile)
+samconfig.toml    SAM CLI configuration for dev and prod environments
+template.yaml     AWS SAM template defining CloudFormation resources
 ```
 
 ## Prerequisites
@@ -85,17 +89,14 @@ Common commands:
 Dependencies (`pyproject.toml` is the single source of truth, `uv.lock` is
 committed):
 
-- **Runtime** dependencies go in `[project].dependencies`
-  (`uv add <package>`). They are shipped to AWS Lambda. Do not add `boto3`;
-  the Lambda runtime provides it.
+- **Runtime** dependencies are defined per Lambda function in `[dependency-groups]`
+  within `pyproject.toml` (e.g., `[dependency-groups.process_order]`).
+  `receive_zalo_event` uses zero third-party packages for cold start <50ms.
+  Do not add `boto3`; the Lambda Python runtime already provides it.
 - **Development** dependencies go in the `dev` group
   (`uv add --group dev <package>`).
-- `src/requirements.txt` is a generated build artifact (ignored by Git).
-  Generate it right before `sam build`:
-
-  ```powershell
-  uv export --frozen --no-dev --no-hashes --no-emit-project -o src/requirements.txt
-  ```
+- Packaging is automated by AWS SAM via the root `Makefile` (`Metadata: BuildMethod: makefile`).
+  Running `sam build` generates isolated deployment packages for each Lambda function.
 
 Workflow:
 
@@ -106,8 +107,9 @@ Workflow:
 
 ## Configuration and secrets
 
-- Environment variables: TBD. Runtime settings will be read from environment
-  variables in `src/shared/settings.py`.
+- Environment variables:
+  - `SSM_PARAM_OA_SECRET_KEY`: SSM parameter name storing the Zalo OA secret key.
+  - `QUEUE_URL`: Target SQS FIFO Queue URL for webhook events.
 - Never commit secrets, credentials or private keys. The pre-commit hook runs
   `detect-private-key` as a safety net.
 - `.env` and `.env.*` files are ignored by Git; only `.env.example` may be
