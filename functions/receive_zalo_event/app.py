@@ -211,9 +211,9 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             },
         }
         if queue_url.endswith(".fifo"):
-            # Group by user_id so events for the same customer are strictly ordered,
-            # while different customers are processed concurrently by Lambda workers.
-            send_params["MessageGroupId"] = candidate.user_id or candidate.app_id
+            # Group strictly by customer user_id for per-customer FIFO ordering
+            # and maximum concurrency across different customers.
+            send_params["MessageGroupId"] = candidate.user_id
             if candidate.msg_id:
                 send_params["MessageDeduplicationId"] = candidate.msg_id
 
