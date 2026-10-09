@@ -4,29 +4,29 @@
 # It provides ARTIFACTS_DIR as the staging directory that will be zipped
 # into the respective Lambda deployment package.
 
-.PHONY: build-ZaloWebhookFunction build-ZaloWorkerFunction
+.PHONY: build-ReceiveZaloEventFunction build-ProcessOrderFunction
 
 # -----------------------------------------------------------------------------
-# Zalo Webhook Lambda (Fast intake API)
+# Receive Zalo Event Lambda (Fast intake API)
 # SLA < 2s; sub-50ms cold start. Zero third-party runtime dependencies.
-# Packages only api/ and shared/ without vendor packages.
+# Packages only receive_zalo_event/ and shared/ without vendor packages.
 # -----------------------------------------------------------------------------
-build-ZaloWebhookFunction:
-	mkdir -p $(ARTIFACTS_DIR)/api $(ARTIFACTS_DIR)/shared
-	cp -R src/api/. $(ARTIFACTS_DIR)/api/
-	cp -R src/shared/. $(ARTIFACTS_DIR)/shared/
+build-ReceiveZaloEventFunction:
+	mkdir -p $(ARTIFACTS_DIR)/receive_zalo_event $(ARTIFACTS_DIR)/shared
+	cp -R functions/receive_zalo_event/. $(ARTIFACTS_DIR)/receive_zalo_event/
+	cp -R shared/. $(ARTIFACTS_DIR)/shared/
 	find $(ARTIFACTS_DIR) -name "__pycache__" -type d -prune -exec rm -rf {} +
 	find $(ARTIFACTS_DIR) -name "*.pyc" -delete
 
 # -----------------------------------------------------------------------------
-# Zalo Worker Lambda (Queue processor)
-# Asynchronous worker for heavier event processing.
-# Packages worker/ and shared/, plus dependencies from [dependency-groups.worker].
+# Process Order Lambda (SQS FIFO Queue consumer)
+# Asynchronous worker for order processing.
+# Packages process_order/ and shared/, plus dependencies from [dependency-groups.worker].
 # -----------------------------------------------------------------------------
-build-ZaloWorkerFunction:
-	mkdir -p $(ARTIFACTS_DIR)/worker $(ARTIFACTS_DIR)/shared
-	cp -R src/worker/. $(ARTIFACTS_DIR)/worker/
-	cp -R src/shared/. $(ARTIFACTS_DIR)/shared/
+build-ProcessOrderFunction:
+	mkdir -p $(ARTIFACTS_DIR)/process_order $(ARTIFACTS_DIR)/shared
+	cp -R functions/process_order/. $(ARTIFACTS_DIR)/process_order/
+	cp -R shared/. $(ARTIFACTS_DIR)/shared/
 	@if command -v uv >/dev/null 2>&1; then \
 		uv export --frozen --only-group worker --no-hashes --no-dev --no-emit-project -o $(ARTIFACTS_DIR)/requirements.txt; \
 		if grep -E -v '^[[:space:]]*(#|$$)' $(ARTIFACTS_DIR)/requirements.txt >/dev/null 2>&1; then \

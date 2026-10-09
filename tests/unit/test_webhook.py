@@ -11,14 +11,14 @@ import boto3
 import pytest
 from moto import mock_aws
 
-from api.app import lambda_handler
-from api.signature import compute_signature
-from shared.settings import (
+from receive_zalo_event.app import lambda_handler
+from receive_zalo_event.settings import (
     clear_secret_cache,
     get_oa_secret_key,
     get_sqs_client,
     get_ssm_client,
 )
+from receive_zalo_event.signature import compute_signature
 
 TEST_APP_ID = "360846524940903967"
 TEST_SECRET_KEY = "test_oa_secret_key_123"  # noqa: S105
@@ -54,7 +54,13 @@ def test_infrastructure(aws_env: None):
         )
 
         sqs = boto3.client("sqs", region_name=TEST_REGION)
-        queue_res = sqs.create_queue(QueueName="test-zalo-events-queue")
+        queue_res = sqs.create_queue(
+            QueueName="test-zalo-events-queue.fifo",
+            Attributes={
+                "FifoQueue": "true",
+                "ContentBasedDeduplication": "true",
+            },
+        )
         queue_url = queue_res["QueueUrl"]
         os.environ["EVENTS_QUEUE_URL"] = queue_url
 
@@ -139,6 +145,7 @@ def test_webhook_success_enqueues_envelope(
         QueueUrl=queue_url,
         MaxNumberOfMessages=1,
         MessageAttributeNames=["All"],
+        AttributeNames=["All"],
     ).get("Messages", [])
 
     assert len(messages) == 1
@@ -152,6 +159,10 @@ def test_webhook_success_enqueues_envelope(
     attrs = received["MessageAttributes"]
     assert attrs["event_name"]["StringValue"] == "user_send_text"
     assert attrs["app_id"]["StringValue"] == TEST_APP_ID
+
+    sys_attrs = received.get("Attributes", {})
+    assert sys_attrs.get("MessageGroupId") == "246845883529197922"
+    assert sys_attrs.get("MessageDeduplicationId") == "96d3cdf3af150460909"
 
 
 def test_webhook_base64_encoded_body(
@@ -334,7 +345,7 @@ def test_webhook_queue_error_returns_503(
     ).hex()
     event = _build_furl_event(body=raw_body, method="POST", signature_header=sig)
 
-    with patch("api.app.get_sqs_client") as mock_sqs:
+    with patch("receive_zalo_event.app.get_sqs_client") as mock_sqs:
         mock_sqs.return_value.send_message.side_effect = RuntimeError(
             "SQS connection failed"
         )

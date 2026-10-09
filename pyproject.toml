@@ -13,7 +13,7 @@ dependencies = []
 package = false
 
 [tool.ruff]
-src = ["src"]
+src = ["functions", "shared"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "SIM", "C4", "PT", "RUF", "S"]
@@ -23,14 +23,15 @@ select = ["E", "F", "W", "I", "B", "UP", "SIM", "C4", "PT", "RUF", "S"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+pythonpath = [".", "functions"]
 addopts = "-ra --strict-markers --strict-config"
 
 [tool.ty.environment]
-root = ["src"]
+root = [".", "functions"]
 
 [dependency-groups]
 dev = [
+    "aws-lambda-powertools>=3.0.0",
     "boto3>=1.43.108",
     "moto>=5.2.3",
     "prek>=0.5.4",
@@ -38,4 +39,6 @@ dev = [
     "ruff>=0.16.10",
     "ty>=0.0.84",
 ]
-worker = []
+worker = [
+    "aws-lambda-powertools>=3.0.0",
+]

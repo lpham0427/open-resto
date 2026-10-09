@@ -2,7 +2,7 @@
 
 Parsing only validates the *shape* of a request. The resulting candidate is
 validated but NOT yet authenticated: it must still pass signature verification
-(`api.signature`) before any of its data is trusted.
+before any of its data is trusted.
 """
 
 import json
@@ -35,6 +35,8 @@ class WebhookCandidate:
     timestamp: str  # Original text, used verbatim in the signature computation.
     occurred_at: datetime
     event_name: str
+    user_id: str | None = None
+    msg_id: str | None = None
 
 
 def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -139,10 +141,33 @@ def parse_candidate(
         return None, errors
 
     event_name = _get_bounded_string(payload, "event_name") or "unknown"
+
+    # Extract user identifier for FIFO grouping (sender.id or user_id_by_app)
+    user_id: str | None = None
+    sender_obj = payload.get("sender")
+    if isinstance(sender_obj, Mapping):
+        sender_id = sender_obj.get("id")
+        if isinstance(sender_id, str | int):
+            user_id = str(sender_id)
+    if not user_id:
+        user_id_by_app = payload.get("user_id_by_app")
+        if isinstance(user_id_by_app, str | int):
+            user_id = str(user_id_by_app)
+
+    # Extract message identifier for FIFO message deduplication
+    msg_id: str | None = None
+    msg_obj = payload.get("message")
+    if isinstance(msg_obj, Mapping):
+        raw_msg_id = msg_obj.get("msg_id")
+        if isinstance(raw_msg_id, str | int):
+            msg_id = str(raw_msg_id)
+
     return WebhookCandidate(
         app_id=app_id,
         signature=signature,
         timestamp=timestamp,
         occurred_at=occurred_at,
         event_name=event_name,
+        user_id=user_id,
+        msg_id=msg_id,
     ), {}

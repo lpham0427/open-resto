@@ -1,21 +1,24 @@
 """HTTP entry point for Zalo Webhook on AWS Lambda Function URL."""
 
+from __future__ import annotations
+
 import base64
 import json
 import logging
 from datetime import UTC, datetime
 from typing import Any
 
-from api.envelope import ZaloWebhookEnvelope
-from api.freshness import WebhookFreshnessStatus, evaluate_freshness
-from api.parser import parse_candidate
-from api.signature import verify_signature
-from shared.settings import (
+from shared.envelope import ZaloWebhookEnvelope
+
+from .freshness import WebhookFreshnessStatus, evaluate_freshness
+from .parser import parse_candidate
+from .settings import (
     get_events_queue_url,
     get_oa_secret_key,
     get_sqs_client,
     get_zalo_app_id,
 )
+from .signature import verify_signature
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -64,7 +67,8 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     3. Cryptographic signature verification using X-ZEvent-Signature.
     4. Freshness evaluation to prevent replay attacks and handle clock skew.
     5. Fail-fast timeout check (500ms safety buffer before AWS hard kill).
-    6. Packaging into ZaloWebhookEnvelope and enqueuing to SQS with bounded latency.
+    6. Packaging into ZaloWebhookEnvelope and enqueuing to SQS FIFO queue with
+       bounded latency.
     7. Return 200 OK within Zalo's SLA.
     """
     received_at_utc = datetime.now(tz=UTC)
@@ -192,10 +196,10 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
 
     try:
         sqs_client = get_sqs_client()
-        sqs_client.send_message(
-            QueueUrl=queue_url,
-            MessageBody=envelope_json,
-            MessageAttributes={
+        send_params: dict[str, Any] = {
+            "QueueUrl": queue_url,
+            "MessageBody": envelope_json,
+            "MessageAttributes": {
                 "event_name": {
                     "DataType": "String",
                     "StringValue": candidate.event_name,
@@ -205,7 +209,15 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
                     "StringValue": candidate.app_id,
                 },
             },
-        )
+        }
+        if queue_url.endswith(".fifo"):
+            # Group by user_id so events for the same customer are strictly ordered,
+            # while different customers are processed concurrently by Lambda workers.
+            send_params["MessageGroupId"] = candidate.user_id or candidate.app_id
+            if candidate.msg_id:
+                send_params["MessageDeduplicationId"] = candidate.msg_id
+
+        sqs_client.send_message(**send_params)
     except Exception:
         # Log exception stack trace but omit raw_body to avoid leaking PII/tokens
         logger.exception(

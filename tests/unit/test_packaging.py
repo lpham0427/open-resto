@@ -102,22 +102,25 @@ def test_dependency_groups_configured_in_pyproject() -> None:
     groups = config.get("dependency-groups", {})
     assert "dev" in groups, "dev dependency group must exist"
     assert "worker" in groups, "worker dependency group must exist"
+    assert "aws-lambda-powertools>=3.0.0" in groups["worker"], (
+        "worker must include aws-lambda-powertools"
+    )
 
 
 def test_webhook_artifact_isolation(tmp_path: Path) -> None:
-    """Webhook artifact must include api and shared without dragging other packages."""
-    src_api = REPO_ROOT / "src" / "api"
-    src_shared = REPO_ROOT / "src" / "shared"
+    """Webhook artifact must include receive_zalo_event and shared only."""
+    src_webhook = REPO_ROOT / "functions" / "receive_zalo_event"
+    src_shared = REPO_ROOT / "shared"
 
-    staging_api = tmp_path / "api"
+    staging_webhook = tmp_path / "receive_zalo_event"
     staging_shared = tmp_path / "shared"
 
-    shutil.copytree(src_api, staging_api)
+    shutil.copytree(src_webhook, staging_webhook)
     shutil.copytree(src_shared, staging_shared)
 
     # Verify other packages are NOT included in the artifact
-    assert not (tmp_path / "worker").exists()
-    assert not (tmp_path / "tokens").exists()
+    assert not (tmp_path / "process_order").exists()
+    assert not (tmp_path / "refresh_token").exists()
 
     # Verify that imports work from staging root in an isolated subprocess
     env = os.environ.copy()
@@ -127,10 +130,11 @@ def test_webhook_artifact_isolation(tmp_path: Path) -> None:
             sys.executable,
             "-c",
             (
-                "import api.app, shared.settings;"
-                "assert callable(api.app.lambda_handler);"
-                "assert callable(shared.settings.get_oa_secret_key);"
-                "assert not hasattr(api, 'worker')"
+                "import receive_zalo_event.app, receive_zalo_event.settings;"
+                "import shared.envelope;"
+                "assert callable(receive_zalo_event.app.lambda_handler);"
+                "assert callable(receive_zalo_event.settings.get_oa_secret_key);"
+                "assert hasattr(shared.envelope, 'ZaloWebhookEnvelope')"
             ),
         ],
         env=env,
@@ -142,18 +146,18 @@ def test_webhook_artifact_isolation(tmp_path: Path) -> None:
 
 
 def test_worker_artifact_isolation(tmp_path: Path) -> None:
-    """Worker artifact must include worker and shared without dragging api package."""
-    src_worker = REPO_ROOT / "src" / "worker"
-    src_shared = REPO_ROOT / "src" / "shared"
+    """Worker artifact must include process_order and shared without webhook package."""
+    src_worker = REPO_ROOT / "functions" / "process_order"
+    src_shared = REPO_ROOT / "shared"
 
-    staging_worker = tmp_path / "worker"
+    staging_worker = tmp_path / "process_order"
     staging_shared = tmp_path / "shared"
 
     shutil.copytree(src_worker, staging_worker)
     shutil.copytree(src_shared, staging_shared)
 
-    # Verify api package is NOT included in the artifact
-    assert not (tmp_path / "api").exists()
+    # Verify webhook package is NOT included in the artifact
+    assert not (tmp_path / "receive_zalo_event").exists()
 
     # Verify that imports work from staging root in an isolated subprocess
     env = os.environ.copy()
@@ -163,10 +167,9 @@ def test_worker_artifact_isolation(tmp_path: Path) -> None:
             sys.executable,
             "-c",
             (
-                "import worker.app, shared.settings;"
-                "assert callable(worker.app.lambda_handler);"
-                "assert callable(shared.settings.get_oa_secret_key);"
-                "assert not hasattr(worker, 'api')"
+                "import process_order.app, shared.envelope;"
+                "assert callable(process_order.app.lambda_handler);"
+                "assert hasattr(shared.envelope, 'ZaloWebhookEnvelope')"
             ),
         ],
         env=env,
