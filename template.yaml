@@ -28,7 +28,7 @@ Parameters:
 Globals:
   Function:
     Runtime: python3.14
-    CodeUri: src/
+    CodeUri: .
     MemorySize: 256
 
 Resources:
@@ -60,6 +60,8 @@ Resources:
   # ---------------------------------------------------------------------------
   ZaloWebhookFunction:
     Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: makefile
     Properties:
       Description: Receives Zalo OA webhook events, verifies them and enqueues them.
       Handler: api.app.lambda_handler
@@ -104,6 +106,8 @@ Resources:
   # ---------------------------------------------------------------------------
   ZaloWorkerFunction:
     Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: makefile
     Properties:
       Description: Consumes Zalo events from SQS and processes them.
       Handler: worker.app.lambda_handler

@@ -413,6 +413,7 @@ dev = [
     { name = "ruff", specifier = ">=0.16.10" },
     { name = "ty", specifier = ">=0.0.84" },
 ]
+worker = []
 
 [[package]]
 name = "packaging"
