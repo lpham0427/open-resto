@@ -101,9 +101,9 @@ def test_dependency_groups_configured_in_pyproject() -> None:
 
     groups = config.get("dependency-groups", {})
     assert "dev" in groups, "dev dependency group must exist"
-    assert "worker" in groups, "worker dependency group must exist"
-    assert "aws-lambda-powertools>=3.0.0" in groups["worker"], (
-        "worker must include aws-lambda-powertools"
+    assert "process_order" in groups, "process_order dependency group must exist"
+    assert "aws-lambda-powertools>=3.0.0" in groups["process_order"], (
+        "process_order must include aws-lambda-powertools"
     )
 
 
@@ -145,15 +145,15 @@ def test_webhook_artifact_isolation(tmp_path: Path) -> None:
     assert res.returncode == 0, f"Import check failed: {res.stderr}"
 
 
-def test_worker_artifact_isolation(tmp_path: Path) -> None:
-    """Worker artifact must include process_order and shared without webhook package."""
-    src_worker = REPO_ROOT / "functions" / "process_order"
+def test_process_order_artifact_isolation(tmp_path: Path) -> None:
+    """Artifact must include process_order and shared without webhook package."""
+    src_process_order = REPO_ROOT / "functions" / "process_order"
     src_shared = REPO_ROOT / "shared"
 
-    staging_worker = tmp_path / "process_order"
+    staging_process_order = tmp_path / "process_order"
     staging_shared = tmp_path / "shared"
 
-    shutil.copytree(src_worker, staging_worker)
+    shutil.copytree(src_process_order, staging_process_order)
     shutil.copytree(src_shared, staging_shared)
 
     # Verify webhook package is NOT included in the artifact

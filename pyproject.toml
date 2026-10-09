@@ -39,6 +39,6 @@ dev = [
     "ruff>=0.16.10",
     "ty>=0.0.84",
 ]
-worker = [
+process_order = [
     "aws-lambda-powertools>=3.0.0",
 ]

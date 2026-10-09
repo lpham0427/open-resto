@@ -415,7 +415,7 @@ dev = [
     { name = "ruff" },
     { name = "ty" },
 ]
-worker = [
+process-order = [
     { name = "aws-lambda-powertools" },
 ]
 
@@ -431,7 +431,7 @@ dev = [
     { name = "ruff", specifier = ">=0.16.10" },
     { name = "ty", specifier = ">=0.0.84" },
 ]
-worker = [{ name = "aws-lambda-powertools", specifier = ">=3.0.0" }]
+process-order = [{ name = "aws-lambda-powertools", specifier = ">=3.0.0" }]
 
 [[package]]
 name = "packaging"

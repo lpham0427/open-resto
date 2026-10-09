@@ -21,14 +21,14 @@ build-ReceiveZaloEventFunction:
 # -----------------------------------------------------------------------------
 # Process Order Lambda (SQS FIFO Queue consumer)
 # Asynchronous worker for order processing.
-# Packages process_order/ and shared/, plus dependencies from [dependency-groups.worker].
+# Packages process_order/ and shared/, plus dependencies from [dependency-groups.process_order].
 # -----------------------------------------------------------------------------
 build-ProcessOrderFunction:
 	mkdir -p $(ARTIFACTS_DIR)/process_order $(ARTIFACTS_DIR)/shared
 	cp -R functions/process_order/. $(ARTIFACTS_DIR)/process_order/
 	cp -R shared/. $(ARTIFACTS_DIR)/shared/
 	@if command -v uv >/dev/null 2>&1; then \
-		uv export --frozen --only-group worker --no-hashes --no-dev --no-emit-project -o $(ARTIFACTS_DIR)/requirements.txt; \
+		uv export --frozen --only-group process_order --no-hashes --no-dev --no-emit-project -o $(ARTIFACTS_DIR)/requirements.txt; \
 		if grep -E -v '^[[:space:]]*(#|$$)' $(ARTIFACTS_DIR)/requirements.txt >/dev/null 2>&1; then \
 			uv pip install -r $(ARTIFACTS_DIR)/requirements.txt --target $(ARTIFACTS_DIR) --python-platform linux --python-version 3.14 --link-mode copy; \
 		fi; \
