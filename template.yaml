@@ -28,6 +28,8 @@ Parameters:
 Globals:
   Function:
     Runtime: python3.14
+    Architectures:
+      - arm64
     CodeUri: .
     MemorySize: 256
 

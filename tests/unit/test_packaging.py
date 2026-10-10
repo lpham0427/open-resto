@@ -178,3 +178,22 @@ def test_process_order_artifact_isolation(tmp_path: Path) -> None:
         check=False,
     )
     assert res.returncode == 0, f"Import check failed: {res.stderr}"
+
+
+def test_global_function_architecture_is_arm64() -> None:
+    """All Lambda functions must default to arm64 architecture via Globals."""
+    template = _load_sam_template()
+    func_globals = template.get("Globals", {}).get("Function", {})
+    architectures = func_globals.get("Architectures", [])
+    assert architectures == ["arm64"], (
+        f"Globals.Function must configure arm64, got {architectures}"
+    )
+
+
+def test_makefile_uses_aarch64_platform() -> None:
+    """Makefile must target aarch64 platform for pip installs."""
+    makefile_path = REPO_ROOT / "Makefile"
+    content = makefile_path.read_text(encoding="utf-8")
+    assert "--python-platform aarch64-manylinux_2_28" in content, (
+        "Makefile must configure aarch64-manylinux_2_28 for uv pip install"
+    )
