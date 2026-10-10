@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import base64
-import json
 import logging
 from datetime import UTC, datetime
 from typing import Any
@@ -26,29 +25,6 @@ logger.setLevel(logging.INFO)
 SQS_GRACE_PERIOD_MS = 500.0
 
 
-def _response(
-    status_code: int,
-    body_data: dict[str, Any],
-    extra_headers: dict[str, str] | None = None,
-) -> dict[str, Any]:
-    """Helper to build standardized Lambda Function URL response (Payload format 2.0).
-
-    AWS Lambda Function URLs require custom HTTP responses to follow API Gateway
-    Payload Format Version 2.0 (`statusCode`, `headers`, and `body` as a string).
-    Reference:
-        https://docs.aws.amazon.com/lambda/latest/dg/urls-invocation.html#urls-payloads
-    """
-    headers = {"Content-Type": "application/json"}
-    if extra_headers:
-        headers.update(extra_headers)
-
-    return {
-        "statusCode": status_code,
-        "headers": headers,
-        "body": json.dumps(body_data),
-    }
-
-
 def _get_remaining_ms(context: Any) -> float | None:
     """Safely extract remaining execution time in milliseconds from Lambda context."""
     if context and hasattr(context, "get_remaining_time_in_millis"):
@@ -62,14 +38,13 @@ def _get_remaining_ms(context: Any) -> float | None:
 def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     """Process incoming Zalo Webhook requests.
 
-    1. Method check: POST only (RFC 9110 compliant with Allow header).
-    2. Strict parsing & structural validation (duplicate-key rejection, bounded fields).
-    3. Cryptographic signature verification using X-ZEvent-Signature.
-    4. Freshness evaluation to prevent replay attacks and handle clock skew.
-    5. Fail-fast timeout check (500ms safety buffer before AWS hard kill).
-    6. Packaging into ZaloWebhookEnvelope and enqueuing to SQS FIFO queue with
+    1. Strict parsing & structural validation (duplicate-key rejection, bounded fields).
+    2. Cryptographic signature verification using X-ZEvent-Signature.
+    3. Freshness evaluation to prevent replay attacks and handle clock skew.
+    4. Fail-fast timeout check (500ms safety buffer before AWS hard kill).
+    5. Packaging into ZaloWebhookEnvelope and enqueuing to SQS FIFO queue with
        bounded latency.
-    7. Return 200 OK within Zalo's SLA.
+    6. Return 200 OK within Zalo's SLA.
     """
     received_at_utc = datetime.now(tz=UTC)
     remaining_ms = _get_remaining_ms(context)
@@ -77,17 +52,6 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
 
     request_context = event.get("requestContext", {})
     request_id = str(request_context.get("requestId") or "unknown-request-id")
-    http_info = request_context.get("http", {})
-    method = http_info.get("method", "POST").upper()
-
-    # Step: method-check (RFC 9110 #section-15.5.6 requirement: Allow header)
-    if method != "POST":
-        logger.info("Unsupported HTTP Method: %s", method)
-        return _response(
-            405,
-            {"error": "Method Not Allowed"},
-            extra_headers={"Allow": "POST"},
-        )
 
     # Step: extract raw body
     raw_body = event.get("body", "")
@@ -96,10 +60,10 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             raw_body = base64.b64decode(raw_body).decode("utf-8")
         except Exception:
             logger.warning("Failed to decode base64 body. RequestId: %s", request_id)
-            return _response(400, {"error": "Invalid base64 payload"})
+            return {"statusCode": 400}
 
     if not raw_body:
-        return _response(400, {"error": "Empty body"})
+        return {"statusCode": 400}
 
     # Step: parse & validate candidate (header keys normalized to lowercase)
     headers = {k.lower(): v for k, v in event.get("headers", {}).items()}
@@ -114,10 +78,7 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             flat_errors,
             request_id,
         )
-        return _response(
-            400,
-            {"error": "Validation failed", "details": validation_errors},
-        )
+        return {"statusCode": 400}
 
     # Step: verify signature against trusted configured app_id
     trusted_app_id = get_zalo_app_id()
@@ -128,7 +89,7 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             "Failed to retrieve Zalo OA secret key from SSM. RequestId: %s",
             request_id,
         )
-        return _response(500, {"error": "Internal configuration error"})
+        return {"statusCode": 500}
 
     if not verify_signature(
         claimed_app_id=candidate.app_id,
@@ -139,7 +100,7 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         signature=candidate.signature,
     ):
         logger.warning("Rejected: invalid signature. RequestId: %s", request_id)
-        return _response(401, {"error": "Invalid signature"})
+        return {"statusCode": 401}
 
     # Step: freshness evaluation (replay protection and clock skew)
     freshness_status = evaluate_freshness(
@@ -153,10 +114,7 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             candidate.timestamp,
             request_id,
         )
-        return _response(
-            200,
-            {"status": "ok", "message": "Expired event acknowledged"},
-        )
+        return {"statusCode": 200}
 
     if freshness_status == WebhookFreshnessStatus.FUTURE_DATED:
         # Treat clock skew as a transient error; 503 forces Zalo redelivery.
@@ -165,10 +123,7 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             candidate.timestamp,
             request_id,
         )
-        return _response(
-            503,
-            {"error": "Future-dated event; temporary clock skew"},
-        )
+        return {"statusCode": 503}
 
     # Step: fail-fast timeout check (500ms safety buffer before hard kill)
     current_remaining_ms = _get_remaining_ms(context)
@@ -178,13 +133,13 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             current_remaining_ms,
             SQS_GRACE_PERIOD_MS,
         )
-        return _response(503, {"error": "Service Unavailable - Timeout"})
+        return {"statusCode": 503}
 
     # Step: enqueue envelope to SQS
     queue_url = get_events_queue_url()
     if not queue_url:
         logger.error("EVENTS_QUEUE_URL is not set. RequestId: %s", request_id)
-        return _response(500, {"error": "Queue configuration error"})
+        return {"statusCode": 500}
 
     envelope = ZaloWebhookEnvelope.create(
         request_id=request_id,
@@ -211,8 +166,6 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             },
         }
         if queue_url.endswith(".fifo"):
-            # Group strictly by customer user_id for per-customer FIFO ordering
-            # and maximum concurrency across different customers.
             send_params["MessageGroupId"] = candidate.user_id
             if candidate.msg_id:
                 send_params["MessageDeduplicationId"] = candidate.msg_id
@@ -223,11 +176,11 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         logger.exception(
             "Failed to send message to SQS queue. RequestId: %s", request_id
         )
-        return _response(503, {"error": "Service Unavailable - Enqueue failed"})
+        return {"statusCode": 503}
 
     logger.info(
         "Successfully enqueued event: %s. RequestId: %s",
         candidate.event_name,
         request_id,
     )
-    return _response(200, {"status": "ok", "message": "ACK"})
+    return {"statusCode": 200}
