@@ -3,7 +3,7 @@
     {
       "messageId": "sample-msg-12345",
       "receiptHandle": "sample-receipt-handle",
-      "body": "{\"request_id\":\"sample-req-12345\",\"received_at_utc\":\"2026-10-09T15:30:00+00:00\",\"occurred_at_utc\":\"2026-10-09T15:29:59+00:00\",\"raw_payload\":\"{\\\"app_id\\\":\\\"test-app-id\\\",\\\"event_name\\\":\\\"user_send_text\\\",\\\"timestamp\\\":\\\"1791559800000\\\"}\"}",
+      "body": "{\"source\":\"zalo\",\"request_id\":\"sample-req-12345\",\"occurred_at_utc\":\"2026-10-09T15:29:59+00:00\",\"raw_payload\":\"{\\\"app_id\\\":\\\"test-app-id\\\",\\\"event_name\\\":\\\"user_send_text\\\",\\\"timestamp\\\":\\\"1791559800000\\\"}\",\"schema_version\":1}",
       "attributes": {
         "ApproximateReceiveCount": "1",
         "SentTimestamp": "1791559800000",
@@ -12,16 +12,7 @@
         "MessageDeduplicationId": "96d3cdf3af150460909",
         "MessageGroupId": "user-123"
       },
-      "messageAttributes": {
-        "event_name": {
-          "stringValue": "user_send_text",
-          "dataType": "String"
-        },
-        "app_id": {
-          "stringValue": "test-app-id",
-          "dataType": "String"
-        }
-      },
+      "messageAttributes": {},
       "md5OfBody": "sample-md5",
       "eventSource": "aws:sqs",
       "eventSourceARN": "arn:aws:sqs:ap-southeast-1:123456789012:open-resto-prod-zalo-events.fifo",

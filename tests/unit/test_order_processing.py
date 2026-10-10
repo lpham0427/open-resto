@@ -97,39 +97,54 @@ def test_envelope_from_json_strict_type_validation() -> None:
     with pytest.raises(ValueError, match="Envelope JSON must be an object"):
         EventEnvelope.from_json("[]")
 
-    # Missing required field
-    with pytest.raises(ValueError, match="Missing required field: 'request_id'"):
-        EventEnvelope.from_json('{"raw_payload":"{}"}')
+    # Missing required field: source
+    with pytest.raises(ValueError, match="Missing required field: 'source'"):
+        EventEnvelope.from_json('{"request_id":"req-1","raw_payload":"{}"}')
 
+    # Non-string source
+    with pytest.raises(ValueError, match="Field 'source' must be a string"):
+        EventEnvelope.from_json(
+            '{"source":123,"request_id":"req-1","raw_payload":"{}"}'
+        )
+
+    # Missing required field: request_id
+    with pytest.raises(ValueError, match="Missing required field: 'request_id'"):
+        EventEnvelope.from_json('{"source":"zalo","raw_payload":"{}"}')
+
+    # Missing required field: raw_payload
     with pytest.raises(ValueError, match="Missing required field: 'raw_payload'"):
-        EventEnvelope.from_json('{"request_id":"req-1"}')
+        EventEnvelope.from_json('{"source":"zalo","request_id":"req-1"}')
 
     # Non-string raw_payload (silent corruption prevention)
     with pytest.raises(ValueError, match="Field 'raw_payload' must be a string"):
-        EventEnvelope.from_json('{"request_id":"req-1","raw_payload":{"a":1}}')
+        EventEnvelope.from_json(
+            '{"source":"zalo","request_id":"req-1","raw_payload":{"a":1}}'
+        )
 
     with pytest.raises(ValueError, match="Field 'raw_payload' must be a string"):
-        EventEnvelope.from_json('{"request_id":"req-1","raw_payload":null}')
+        EventEnvelope.from_json(
+            '{"source":"zalo","request_id":"req-1","raw_payload":null}'
+        )
 
     # Non-string request_id
     with pytest.raises(ValueError, match="Field 'request_id' must be a string"):
-        EventEnvelope.from_json('{"request_id":123,"raw_payload":"{}"}')
+        EventEnvelope.from_json('{"source":"zalo","request_id":123,"raw_payload":"{}"}')
 
     # Non-string occurred_at_utc
     with pytest.raises(ValueError, match="Field 'occurred_at_utc' must be a string"):
         EventEnvelope.from_json(
-            '{"request_id":"req-1","raw_payload":"{}","occurred_at_utc":123}'
+            '{"source":"zalo","request_id":"req-1","raw_payload":"{}","occurred_at_utc":123}'
         )
 
     # Invalid schema_version
     with pytest.raises(ValueError, match="Field 'schema_version' must be an integer"):
         EventEnvelope.from_json(
-            '{"request_id":"req-1","raw_payload":"{}","schema_version":"1"}'
+            '{"source":"zalo","request_id":"req-1","raw_payload":"{}","schema_version":"1"}'
         )
 
     with pytest.raises(ValueError, match="Field 'schema_version' must be an integer"):
         EventEnvelope.from_json(
-            '{"request_id":"req-1","raw_payload":"{}","schema_version":true}'
+            '{"source":"zalo","request_id":"req-1","raw_payload":"{}","schema_version":true}'
         )
 
 

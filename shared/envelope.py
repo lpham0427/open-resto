@@ -77,16 +77,8 @@ class EventEnvelope:
                 f"Envelope JSON must be an object, got {type(data).__name__}"
             )
 
-        source_val = data.get("source")
-        if source_val is not None and not isinstance(source_val, str):
-            err_type = type(source_val).__name__
-            raise ValueError(
-                f"Field 'source' must be a string or omitted, got {err_type}"
-            )
-        source = source_val or "zalo"
-
         return cls(
-            source=source,
+            source=_require_str(data, "source"),
             request_id=_require_str(data, "request_id"),
             occurred_at_utc=_optional_str(data, "occurred_at_utc"),
             raw_payload=_require_str(data, "raw_payload"),
@@ -125,7 +117,3 @@ class EventEnvelope:
             raw_payload=raw_payload,
             schema_version=schema_version,
         )
-
-
-# Backward-compatible alias for existing imports
-ZaloWebhookEnvelope = EventEnvelope

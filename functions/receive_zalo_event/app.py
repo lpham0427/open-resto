@@ -43,7 +43,7 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     2. Cryptographic signature verification using X-ZEvent-Signature.
     3. Freshness evaluation to prevent replay attacks and handle clock skew.
     4. Fail-fast timeout check (500ms safety buffer before AWS hard kill).
-    5. Packaging into ZaloWebhookEnvelope and enqueuing to SQS FIFO queue with
+    5. Packaging into EventEnvelope and enqueuing to SQS FIFO queue with
        bounded latency.
     6. Return 200 OK within Zalo's SLA.
     """
