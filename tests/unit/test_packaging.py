@@ -178,3 +178,13 @@ def test_process_order_artifact_isolation(tmp_path: Path) -> None:
         check=False,
     )
     assert res.returncode == 0, f"Import check failed: {res.stderr}"
+
+
+def test_receive_zalo_event_architecture_is_arm64() -> None:
+    """ReceiveZaloEventFunction must use arm64 architecture for fast cold start."""
+    template = _load_sam_template()
+    func_config = template.get("Resources", {}).get("ReceiveZaloEventFunction", {})
+    architectures = func_config.get("Properties", {}).get("Architectures", [])
+    assert architectures == ["arm64"], (
+        f"ReceiveZaloEventFunction must use arm64, got {architectures}"
+    )
