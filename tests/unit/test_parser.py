@@ -3,7 +3,7 @@
 import json
 from datetime import UTC, datetime
 
-from api.parser import (
+from receive_zalo_event.parser import (
     SIGNATURE_HEADER,
     extract_signature,
     parse_candidate,
@@ -21,7 +21,9 @@ def _build_valid_payload() -> str:
             "app_id": SAMPLE_APP_ID,
             "timestamp": SAMPLE_TS,
             "event_name": "user_send_text",
-            "message": {"text": "hello"},
+            "sender": {"id": "246845883529197922"},
+            "user_id_by_app": "552177279717587730",
+            "message": {"text": "hello", "msg_id": "96d3cdf3af150460909"},
         }
     )
 
@@ -39,6 +41,8 @@ def test_parse_candidate_success() -> None:
     assert candidate.signature == bytes.fromhex(SAMPLE_SIG_HEX)
     assert candidate.occurred_at == datetime(2024, 10, 4, 0, 0, 0, tzinfo=UTC)
     assert candidate.event_name == "user_send_text"
+    assert candidate.user_id == "246845883529197922"
+    assert candidate.msg_id == "96d3cdf3af150460909"
 
 
 def test_parse_candidate_without_mac_prefix() -> None:
@@ -115,3 +119,41 @@ def test_signature_extraction_edge_cases() -> None:
     # Comma-joined duplicate header (mac=a...,mac=b...)
     comma_joined = f"mac={SAMPLE_SIG_HEX},mac={SAMPLE_SIG_HEX}"
     assert extract_signature({SIGNATURE_HEADER: comma_joined}) is None
+
+
+def test_parse_user_id_and_msg_id() -> None:
+    raw_body = json.dumps(
+        {
+            "app_id": SAMPLE_APP_ID,
+            "timestamp": SAMPLE_TS,
+            "event_name": "user_send_text",
+            "sender": {"id": "246845883529197922"},
+            "user_id_by_app": "552177279717587730",
+            "message": {
+                "text": "Cho minh dat 2 suat com",
+                "msg_id": "96d3cdf3af150460909",
+            },
+        }
+    )
+    headers = {SIGNATURE_HEADER: SAMPLE_SIG_HEX}
+    candidate, errors = parse_candidate(headers, raw_body)
+
+    assert errors == {}
+    assert candidate is not None
+    assert candidate.user_id == "246845883529197922"
+    assert candidate.msg_id == "96d3cdf3af150460909"
+
+
+def test_reject_missing_user_id() -> None:
+    raw_body = json.dumps(
+        {
+            "app_id": SAMPLE_APP_ID,
+            "timestamp": SAMPLE_TS,
+            "event_name": "user_send_text",
+            "message": {"text": "hello"},
+        }
+    )
+    headers = {SIGNATURE_HEADER: SAMPLE_SIG_HEX}
+    candidate, errors = parse_candidate(headers, raw_body)
+    assert candidate is None
+    assert "Payload.user_id" in errors

@@ -2,7 +2,7 @@
 
 Parsing only validates the *shape* of a request. The resulting candidate is
 validated but NOT yet authenticated: it must still pass signature verification
-(`api.signature`) before any of its data is trusted.
+before any of its data is trusted.
 """
 
 import json
@@ -35,6 +35,8 @@ class WebhookCandidate:
     timestamp: str  # Original text, used verbatim in the signature computation.
     occurred_at: datetime
     event_name: str
+    user_id: str
+    msg_id: str | None = None
 
 
 def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -93,6 +95,37 @@ def extract_signature(headers: Mapping[str, str]) -> bytes | None:
     return bytes.fromhex(value)
 
 
+def extract_user_id(payload: Mapping[str, Any]) -> str | None:
+    """Extract bounded user ID from sender.id or user_id_by_app."""
+    sender_obj = payload.get("sender")
+    if isinstance(sender_obj, Mapping):
+        sender_id = sender_obj.get("id")
+        if isinstance(sender_id, str) and 0 < len(sender_id) <= MAX_FIELD_LENGTH:
+            return sender_id
+        if isinstance(sender_id, int) and sender_id > 0:
+            return str(sender_id)
+
+    user_id_by_app = payload.get("user_id_by_app")
+    if isinstance(user_id_by_app, str) and 0 < len(user_id_by_app) <= MAX_FIELD_LENGTH:
+        return user_id_by_app
+    if isinstance(user_id_by_app, int) and user_id_by_app > 0:
+        return str(user_id_by_app)
+
+    return None
+
+
+def extract_msg_id(payload: Mapping[str, Any]) -> str | None:
+    """Extract optional bounded message ID from message.msg_id for deduplication."""
+    msg_obj = payload.get("message")
+    if isinstance(msg_obj, Mapping):
+        raw_msg_id = msg_obj.get("msg_id")
+        if isinstance(raw_msg_id, str) and 0 < len(raw_msg_id) <= MAX_FIELD_LENGTH:
+            return raw_msg_id
+        if isinstance(raw_msg_id, int) and raw_msg_id > 0:
+            return str(raw_msg_id)
+    return None
+
+
 def parse_candidate(
     headers: Mapping[str, str], raw_body: str
 ) -> tuple[WebhookCandidate | None, ValidationErrors]:
@@ -129,20 +162,31 @@ def parse_candidate(
             "optionally prefixed by mac=."
         ]
 
+    user_id = extract_user_id(payload)
+    if user_id is None:
+        errors["Payload.user_id"] = [
+            "user_id must be provided via sender.id or user_id_by_app."
+        ]
+
     if (
         errors
         or app_id is None
         or timestamp is None
         or occurred_at is None
         or signature is None
+        or user_id is None
     ):
         return None, errors
 
     event_name = _get_bounded_string(payload, "event_name") or "unknown"
+    msg_id = extract_msg_id(payload)
+
     return WebhookCandidate(
         app_id=app_id,
         signature=signature,
         timestamp=timestamp,
         occurred_at=occurred_at,
         event_name=event_name,
+        user_id=user_id,
+        msg_id=msg_id,
     ), {}

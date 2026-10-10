@@ -1,49 +1,29 @@
 """HTTP entry point for Zalo Webhook on AWS Lambda Function URL."""
 
+from __future__ import annotations
+
 import base64
-import json
+import hashlib
 import logging
 from datetime import UTC, datetime
 from typing import Any
 
-from api.envelope import ZaloWebhookEnvelope
-from api.freshness import WebhookFreshnessStatus, evaluate_freshness
-from api.parser import parse_candidate
-from api.signature import verify_signature
-from shared.settings import (
+from shared.envelope import EventEnvelope
+
+from .freshness import WebhookFreshnessStatus, evaluate_freshness
+from .parser import parse_candidate
+from .settings import (
     get_events_queue_url,
     get_oa_secret_key,
     get_sqs_client,
     get_zalo_app_id,
 )
+from .signature import verify_signature
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 SQS_GRACE_PERIOD_MS = 500.0
-
-
-def _response(
-    status_code: int,
-    body_data: dict[str, Any],
-    extra_headers: dict[str, str] | None = None,
-) -> dict[str, Any]:
-    """Helper to build standardized Lambda Function URL response (Payload format 2.0).
-
-    AWS Lambda Function URLs require custom HTTP responses to follow API Gateway
-    Payload Format Version 2.0 (`statusCode`, `headers`, and `body` as a string).
-    Reference:
-        https://docs.aws.amazon.com/lambda/latest/dg/urls-invocation.html#urls-payloads
-    """
-    headers = {"Content-Type": "application/json"}
-    if extra_headers:
-        headers.update(extra_headers)
-
-    return {
-        "statusCode": status_code,
-        "headers": headers,
-        "body": json.dumps(body_data),
-    }
 
 
 def _get_remaining_ms(context: Any) -> float | None:
@@ -59,13 +39,13 @@ def _get_remaining_ms(context: Any) -> float | None:
 def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     """Process incoming Zalo Webhook requests.
 
-    1. Method check: POST only (RFC 9110 compliant with Allow header).
-    2. Strict parsing & structural validation (duplicate-key rejection, bounded fields).
-    3. Cryptographic signature verification using X-ZEvent-Signature.
-    4. Freshness evaluation to prevent replay attacks and handle clock skew.
-    5. Fail-fast timeout check (500ms safety buffer before AWS hard kill).
-    6. Packaging into ZaloWebhookEnvelope and enqueuing to SQS with bounded latency.
-    7. Return 200 OK within Zalo's SLA.
+    1. Strict parsing & structural validation (duplicate-key rejection, bounded fields).
+    2. Cryptographic signature verification using X-ZEvent-Signature.
+    3. Freshness evaluation to prevent replay attacks and handle clock skew.
+    4. Fail-fast timeout check (500ms safety buffer before AWS hard kill).
+    5. Packaging into EventEnvelope and enqueuing to SQS FIFO queue with
+       bounded latency.
+    6. Return 200 OK within Zalo's SLA.
     """
     received_at_utc = datetime.now(tz=UTC)
     remaining_ms = _get_remaining_ms(context)
@@ -73,17 +53,6 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
 
     request_context = event.get("requestContext", {})
     request_id = str(request_context.get("requestId") or "unknown-request-id")
-    http_info = request_context.get("http", {})
-    method = http_info.get("method", "POST").upper()
-
-    # Step: method-check (RFC 9110 #section-15.5.6 requirement: Allow header)
-    if method != "POST":
-        logger.info("Unsupported HTTP Method: %s", method)
-        return _response(
-            405,
-            {"error": "Method Not Allowed"},
-            extra_headers={"Allow": "POST"},
-        )
 
     # Step: extract raw body
     raw_body = event.get("body", "")
@@ -92,10 +61,10 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             raw_body = base64.b64decode(raw_body).decode("utf-8")
         except Exception:
             logger.warning("Failed to decode base64 body. RequestId: %s", request_id)
-            return _response(400, {"error": "Invalid base64 payload"})
+            return {"statusCode": 400}
 
     if not raw_body:
-        return _response(400, {"error": "Empty body"})
+        return {"statusCode": 400}
 
     # Step: parse & validate candidate (header keys normalized to lowercase)
     headers = {k.lower(): v for k, v in event.get("headers", {}).items()}
@@ -110,10 +79,7 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             flat_errors,
             request_id,
         )
-        return _response(
-            400,
-            {"error": "Validation failed", "details": validation_errors},
-        )
+        return {"statusCode": 400}
 
     # Step: verify signature against trusted configured app_id
     trusted_app_id = get_zalo_app_id()
@@ -124,7 +90,7 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             "Failed to retrieve Zalo OA secret key from SSM. RequestId: %s",
             request_id,
         )
-        return _response(500, {"error": "Internal configuration error"})
+        return {"statusCode": 500}
 
     if not verify_signature(
         claimed_app_id=candidate.app_id,
@@ -135,7 +101,7 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         signature=candidate.signature,
     ):
         logger.warning("Rejected: invalid signature. RequestId: %s", request_id)
-        return _response(401, {"error": "Invalid signature"})
+        return {"statusCode": 401}
 
     # Step: freshness evaluation (replay protection and clock skew)
     freshness_status = evaluate_freshness(
@@ -149,10 +115,7 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             candidate.timestamp,
             request_id,
         )
-        return _response(
-            200,
-            {"status": "ok", "message": "Expired event acknowledged"},
-        )
+        return {"statusCode": 200}
 
     if freshness_status == WebhookFreshnessStatus.FUTURE_DATED:
         # Treat clock skew as a transient error; 503 forces Zalo redelivery.
@@ -161,10 +124,7 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             candidate.timestamp,
             request_id,
         )
-        return _response(
-            503,
-            {"error": "Future-dated event; temporary clock skew"},
-        )
+        return {"statusCode": 503}
 
     # Step: fail-fast timeout check (500ms safety buffer before hard kill)
     current_remaining_ms = _get_remaining_ms(context)
@@ -174,48 +134,71 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             current_remaining_ms,
             SQS_GRACE_PERIOD_MS,
         )
-        return _response(503, {"error": "Service Unavailable - Timeout"})
+        return {"statusCode": 503}
 
     # Step: enqueue envelope to SQS
     queue_url = get_events_queue_url()
     if not queue_url:
         logger.error("EVENTS_QUEUE_URL is not set. RequestId: %s", request_id)
-        return _response(500, {"error": "Queue configuration error"})
+        return {"statusCode": 500}
 
-    envelope = ZaloWebhookEnvelope.create(
+    envelope = EventEnvelope.create(
+        source="zalo",
         request_id=request_id,
-        received_at=received_at_utc,
         occurred_at=candidate.occurred_at,
         raw_payload=raw_body,
     )
     envelope_json = envelope.to_json()
 
+    # Guard: alert if payload approaches SQS 64 KiB billable request boundary
+    payload_size = len(envelope_json.encode("utf-8"))
+    if payload_size > 60 * 1024:
+        logger.warning(
+            "Large enqueue payload: %d bytes (>60 KiB). RequestId: %s",
+            payload_size,
+            request_id,
+        )
+
     try:
         sqs_client = get_sqs_client()
-        sqs_client.send_message(
-            QueueUrl=queue_url,
-            MessageBody=envelope_json,
-            MessageAttributes={
-                "event_name": {
-                    "DataType": "String",
-                    "StringValue": candidate.event_name,
-                },
-                "app_id": {
-                    "DataType": "String",
-                    "StringValue": candidate.app_id,
-                },
-            },
+        # Compute deterministic MessageDeduplicationId for SQS FIFO queue:
+        # 1. Why SHA-256 hash? SQS FIFO limits MessageDeduplicationId to 128 chars.
+        #    msg_id can be up to 256 chars; hashing guarantees bounded 64 hex chars.
+        # 2. Why prefix event_name? Prevents SQS from silently dropping different
+        #    event types (e.g. user_send_text vs user_seen_message) sharing msg_id.
+        # 3. Why fallback to raw_body? Events without msg_id (e.g. follow/unfollow)
+        #    still need deduplication across Zalo retries. Using raw_body ensures
+        #    identical hashes across retries, unlike the envelope MessageBody which
+        #    contains unique request_id and received_at_utc timestamps.
+        # 4. Note: SQS FIFO deduplication interval is 5 minutes. Downstream consumers
+        #    must still implement idempotency for retries arriving beyond 5 minutes.
+        dedup_source = (
+            f"{candidate.event_name}:{candidate.msg_id}"
+            if candidate.msg_id
+            else raw_body
         )
+        dedup_id = hashlib.sha256(dedup_source.encode("utf-8")).hexdigest()
+
+        # Omit custom MessageAttributes: SQS billable requests are charged per 64 KiB
+        # chunk including attributes. event_name and app_id are already in raw_payload
+        # or constant; removing redundant attributes minimizes payload footprint.
+        send_params: dict[str, Any] = {
+            "QueueUrl": queue_url,
+            "MessageBody": envelope_json,
+            "MessageGroupId": candidate.user_id,
+            "MessageDeduplicationId": dedup_id,
+        }
+        sqs_client.send_message(**send_params)
     except Exception:
         # Log exception stack trace but omit raw_body to avoid leaking PII/tokens
         logger.exception(
             "Failed to send message to SQS queue. RequestId: %s", request_id
         )
-        return _response(503, {"error": "Service Unavailable - Enqueue failed"})
+        return {"statusCode": 503}
 
     logger.info(
         "Successfully enqueued event: %s. RequestId: %s",
         candidate.event_name,
         request_id,
     )
-    return _response(200, {"status": "ok", "message": "ACK"})
+    return {"statusCode": 200}

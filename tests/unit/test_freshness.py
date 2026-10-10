@@ -2,7 +2,7 @@
 
 from datetime import UTC, datetime, timedelta
 
-from api.freshness import (
+from receive_zalo_event.freshness import (
     MAX_AGE,
     MAX_FUTURE_SKEW,
     WebhookFreshnessStatus,

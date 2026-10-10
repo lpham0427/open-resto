@@ -1,0 +1,30 @@
+{
+  "version": "2.0",
+  "routeKey": "$default",
+  "rawPath": "/",
+  "rawQueryString": "",
+  "headers": {
+    "content-type": "application/json",
+    "x-zevent-signature": "mac=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+  },
+  "requestContext": {
+    "accountId": "123456789012",
+    "apiId": "sample-function-url",
+    "domainName": "sample-function-url.lambda-url.ap-southeast-1.on.aws",
+    "domainPrefix": "sample-function-url",
+    "http": {
+      "method": "POST",
+      "path": "/",
+      "protocol": "HTTP/1.1",
+      "sourceIp": "127.0.0.1",
+      "userAgent": "Zalo-Webhook-Agent"
+    },
+    "requestId": "sample-req-12345",
+    "routeKey": "$default",
+    "stage": "$default",
+    "time": "09/Oct/2026:15:30:00 +0000",
+    "timeEpoch": 1791559800000
+  },
+  "body": "{\"app_id\":\"test-app-id\",\"event_name\":\"user_send_text\",\"timestamp\":\"1791559800000\",\"sender\":{\"id\":\"user-123\"},\"recipient\":{\"id\":\"oa-456\"},\"message\":{\"text\":\"Toi muon dat 2 suat com tam\",\"msg_id\":\"96d3cdf3af150460909\"}}",
+  "isBase64Encoded": false
+}

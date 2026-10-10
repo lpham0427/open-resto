@@ -1,6 +1,6 @@
 """Unit tests for Zalo webhook signature verification."""
 
-from api.signature import compute_signature, verify_signature
+from receive_zalo_event.signature import compute_signature, verify_signature
 
 
 def test_compute_signature_length() -> None:

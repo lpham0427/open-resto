@@ -29,9 +29,6 @@ jobs:
       - name: Install Python interpreter
         run: uv python install
 
-      - name: Export Lambda requirements
-        run: uv export --frozen --no-dev --no-hashes --no-emit-project -o src/requirements.txt
-
       - name: Configure AWS credentials via OIDC
         uses: aws-actions/configure-aws-credentials@v6
         with:

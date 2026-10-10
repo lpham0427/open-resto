@@ -1,6 +1,7 @@
 """Unit and integration tests for Zalo webhook Lambda handler."""
 
 import base64
+import hashlib
 import json
 import os
 from datetime import UTC, datetime, timedelta
@@ -11,14 +12,14 @@ import boto3
 import pytest
 from moto import mock_aws
 
-from api.app import lambda_handler
-from api.signature import compute_signature
-from shared.settings import (
+from receive_zalo_event.app import lambda_handler
+from receive_zalo_event.settings import (
     clear_secret_cache,
     get_oa_secret_key,
     get_sqs_client,
     get_ssm_client,
 )
+from receive_zalo_event.signature import compute_signature
 
 TEST_APP_ID = "360846524940903967"
 TEST_SECRET_KEY = "test_oa_secret_key_123"  # noqa: S105
@@ -54,7 +55,13 @@ def test_infrastructure(aws_env: None):
         )
 
         sqs = boto3.client("sqs", region_name=TEST_REGION)
-        queue_res = sqs.create_queue(QueueName="test-zalo-events-queue")
+        queue_res = sqs.create_queue(
+            QueueName="test-zalo-events-queue.fifo",
+            Attributes={
+                "FifoQueue": "true",
+                "ContentBasedDeduplication": "true",
+            },
+        )
         queue_url = queue_res["QueueUrl"]
         os.environ["EVENTS_QUEUE_URL"] = queue_url
 
@@ -130,28 +137,30 @@ def test_webhook_success_enqueues_envelope(
     response = lambda_handler(event, None)
 
     assert response["statusCode"] == 200
-    body_data = json.loads(response["body"])
-    assert body_data["status"] == "ok"
-    assert body_data["message"] == "ACK"
 
     # Verify message in SQS is properly structured envelope
     messages = sqs.receive_message(
         QueueUrl=queue_url,
         MaxNumberOfMessages=1,
         MessageAttributeNames=["All"],
+        AttributeNames=["All"],
     ).get("Messages", [])
 
     assert len(messages) == 1
     received = messages[0]
     envelope_data = json.loads(received["Body"])
+    assert envelope_data["source"] == "zalo"
     assert envelope_data["request_id"] == "req-abc-999"
     assert envelope_data["raw_payload"] == raw_body
-    assert "received_at_utc" in envelope_data
     assert envelope_data["occurred_at_utc"] is not None
+    assert envelope_data["schema_version"] == 1
+    assert "received_at_utc" not in envelope_data
+    assert "MessageAttributes" not in received
 
-    attrs = received["MessageAttributes"]
-    assert attrs["event_name"]["StringValue"] == "user_send_text"
-    assert attrs["app_id"]["StringValue"] == TEST_APP_ID
+    sys_attrs = received.get("Attributes", {})
+    assert sys_attrs.get("MessageGroupId") == "246845883529197922"
+    expected_dedup = hashlib.sha256(b"user_send_text:96d3cdf3af150460909").hexdigest()
+    assert sys_attrs.get("MessageDeduplicationId") == expected_dedup
 
 
 def test_webhook_base64_encoded_body(
@@ -175,14 +184,12 @@ def test_webhook_base64_encoded_body(
     assert response["statusCode"] == 200
 
 
-def test_webhook_method_not_allowed_includes_allow_header(
+def test_webhook_invalid_payload_returns_400(
     test_infrastructure: dict[str, Any],
 ) -> None:
     event = _build_furl_event(body="{}", method="GET")
     response = lambda_handler(event, None)
-    assert response["statusCode"] == 405
-    assert response["headers"]["Allow"] == "POST"
-    assert json.loads(response["body"])["error"] == "Method Not Allowed"
+    assert response["statusCode"] == 400
 
 
 def test_webhook_expired_event_acknowledged_with_200(
@@ -202,7 +209,6 @@ def test_webhook_expired_event_acknowledged_with_200(
     response = lambda_handler(event, None)
     # Must acknowledge with 200 so Zalo does not endlessly retry dead events
     assert response["statusCode"] == 200
-    assert "Expired" in json.loads(response["body"])["message"]
 
     # SQS must not receive the expired event
     messages = sqs.receive_message(QueueUrl=queue_url).get("Messages", [])
@@ -247,7 +253,6 @@ def test_webhook_fail_fast_on_low_remaining_time(
 
     response = lambda_handler(event, mock_context)
     assert response["statusCode"] == 503
-    assert "Timeout" in json.loads(response["body"])["error"]
 
 
 @pytest.mark.parametrize(
@@ -274,7 +279,6 @@ def test_webhook_missing_required_fields(
     event = _build_furl_event(body=raw_body, method="POST")
     response = lambda_handler(event, None)
     assert response["statusCode"] == 400
-    assert "Validation failed" in json.loads(response["body"])["error"]
 
 
 def test_webhook_invalid_signature(test_infrastructure: dict[str, Any]) -> None:
@@ -292,7 +296,6 @@ def test_webhook_invalid_signature(test_infrastructure: dict[str, Any]) -> None:
 
     response = lambda_handler(event, None)
     assert response["statusCode"] == 401
-    assert "Invalid signature" in json.loads(response["body"])["error"]
 
     messages = sqs.receive_message(QueueUrl=queue_url).get("Messages", [])
     assert len(messages) == 0
@@ -307,7 +310,6 @@ def test_webhook_missing_signature_header(
 
     response = lambda_handler(event, None)
     assert response["statusCode"] == 400
-    assert "Validation failed" in json.loads(response["body"])["error"]
 
 
 def test_secret_caching_across_invocations(
@@ -334,10 +336,82 @@ def test_webhook_queue_error_returns_503(
     ).hex()
     event = _build_furl_event(body=raw_body, method="POST", signature_header=sig)
 
-    with patch("api.app.get_sqs_client") as mock_sqs:
+    with patch("receive_zalo_event.app.get_sqs_client") as mock_sqs:
         mock_sqs.return_value.send_message.side_effect = RuntimeError(
             "SQS connection failed"
         )
         response = lambda_handler(event, None)
         assert response["statusCode"] == 503
-        assert "Enqueue failed" in json.loads(response["body"])["error"]
+
+
+def test_webhook_event_without_msg_id_deduplicates_by_raw_body_hash(
+    test_infrastructure: dict[str, Any],
+) -> None:
+    sqs = test_infrastructure["sqs"]
+    queue_url = test_infrastructure["queue_url"]
+
+    # Payload with valid user_id but no message/msg_id
+    payload = {
+        "app_id": TEST_APP_ID,
+        "event_name": "follow",
+        "sender": {"id": "user_follow_123"},
+        "timestamp": str(int(datetime.now(tz=UTC).timestamp() * 1000)),
+    }
+    raw_body = json.dumps(payload, separators=(",", ":"))
+    sig = compute_signature(
+        TEST_APP_ID, raw_body, payload["timestamp"], TEST_SECRET_KEY
+    ).hex()
+    event = _build_furl_event(
+        body=raw_body,
+        method="POST",
+        signature_header=f"mac={sig}",
+    )
+
+    response = lambda_handler(event, None)
+    assert response["statusCode"] == 200
+
+    messages = sqs.receive_message(
+        QueueUrl=queue_url,
+        AttributeNames=["All"],
+    ).get("Messages", [])
+    assert len(messages) == 1
+
+    sys_attrs = messages[0].get("Attributes", {})
+    assert sys_attrs.get("MessageGroupId") == "user_follow_123"
+    expected_dedup = hashlib.sha256(raw_body.encode("utf-8")).hexdigest()
+    assert sys_attrs.get("MessageDeduplicationId") == expected_dedup
+
+
+def test_sqs_client_bounded_latency_and_disabled_retries(
+    test_infrastructure: dict[str, Any],
+) -> None:
+    client = get_sqs_client()
+    config = client.meta.config
+
+    assert config.connect_timeout == 0.5
+    assert config.read_timeout == 1.0
+    # Must enforce total_max_attempts == 1 to strictly disable retries (0 retries)
+    assert config.retries == {"total_max_attempts": 1, "mode": "standard"}
+
+
+def test_webhook_large_payload_logs_warning(
+    test_infrastructure: dict[str, Any],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    large_text = "x" * (61 * 1024)
+    payload = _make_fresh_payload()
+    payload["message"]["text"] = large_text
+    raw_body = json.dumps(payload, separators=(",", ":"))
+    sig = compute_signature(
+        TEST_APP_ID, raw_body, payload["timestamp"], TEST_SECRET_KEY
+    ).hex()
+    event = _build_furl_event(
+        body=raw_body,
+        method="POST",
+        signature_header=f"mac={sig}",
+    )
+
+    with caplog.at_level("WARNING"):
+        response = lambda_handler(event, None)
+        assert response["statusCode"] == 200
+        assert "Large enqueue payload" in caplog.text
