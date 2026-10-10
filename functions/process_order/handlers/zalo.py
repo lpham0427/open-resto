@@ -9,12 +9,9 @@ from shared.envelope import EventEnvelope
 from shared.zalo.models import UserSendTextEvent
 from shared.zalo.parser import InvalidPayloadError, parse_zalo_event
 
-from process_order.registry import register_order_handler
-
 logger = Logger(service="process_order")
 
 
-@register_order_handler("zalo")
 class ZaloOrderHandler:
     """Handles order events originating from Zalo Official Account webhooks.
 

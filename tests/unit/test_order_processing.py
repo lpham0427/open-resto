@@ -15,7 +15,6 @@ from shared.zalo.parser import InvalidPayloadError, parse_zalo_event
 from process_order.app import lambda_handler
 from process_order.factory import OrderHandlerFactory, UnsupportedSourceError
 from process_order.handlers.zalo import ZaloOrderHandler
-from process_order.registry import register_order_handler
 
 
 @dataclass
@@ -166,10 +165,10 @@ def test_parse_valid_user_send_text_event() -> None:
 
     # Verify immutability
     with pytest.raises(FrozenInstanceError):
-        event.user_id = "mutated"
+        setattr(event, "user_id", "mutated")  # noqa: B010
 
     with pytest.raises(FrozenInstanceError):
-        event.message.text = "mutated"
+        setattr(event.message, "text", "mutated")  # noqa: B010
 
 
 def test_parse_user_send_text_fallback_to_user_id_by_app() -> None:
@@ -315,27 +314,6 @@ def test_order_handler_factory_raises_for_unsupported_source() -> None:
         match="No order handler registered for source 'unknown_provider'",
     ):
         OrderHandlerFactory.get_handler("unknown_provider")
-
-
-def test_order_handler_factory_decorator_registration() -> None:
-    @register_order_handler("telegram")
-    class _MockTelegramHandler:
-        def handle(self, envelope: EventEnvelope) -> str:
-            return f"handled telegram: {envelope.request_id}"
-
-    try:
-        handler = OrderHandlerFactory.get_handler("telegram")
-        assert isinstance(handler, _MockTelegramHandler)
-
-        env = EventEnvelope.create(
-            source="telegram",
-            request_id="tg-123",
-            occurred_at=datetime.now(tz=UTC),
-            raw_payload="{}",
-        )
-        assert handler.handle(env) == "handled telegram: tg-123"
-    finally:
-        OrderHandlerFactory.reset_registry()
 
 
 # ---------------------------------------------------------------------------
