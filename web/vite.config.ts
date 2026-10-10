@@ -2,6 +2,7 @@
 import { fileURLToPath } from 'node:url'
 import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
+import tailwindcss from '@tailwindcss/vite'
 
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
@@ -14,7 +15,7 @@ export default defineConfig(({ mode }) => {
 
   return {
     base: '/',
-    plugins: [react()],
+    plugins: [react(), tailwindcss()],
     server: {
       proxy: {
         '/api': {
@@ -25,9 +26,8 @@ export default defineConfig(({ mode }) => {
     },
     build: {
       outDir: 'dist',
-      // 'hidden' generates separate .map files on disk but suppresses sourceMappingURL comments,
-      // preventing browser DevTools from automatically discovering or serving sourcemaps publicly.
-      sourcemap: 'hidden',
+      // Sourcemaps disabled to prevent generating .map files that would be synced to S3 and served
+      sourcemap: false,
     },
     test: {
       globals: true,

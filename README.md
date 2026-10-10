@@ -107,6 +107,12 @@ Frontend commands (run from repository root with `--prefix web` or inside `web/`
 | Build        | `npm --prefix web run build`        |
 | Preview      | `npm --prefix web run preview`      |
 
+Frontend styling:
+
+- **Approach**: Tailwind CSS v4 integrated via the official `@tailwindcss/vite` plugin for build-time compilation (no runtime-injected styles, strict Content-Security-Policy compliant).
+- **Design tokens**: Configured CSS-first via the `@theme` directive in `web/src/index.css` (e.g. `--font-sans`).
+- **Browser support**: Modern evergreen browsers supporting modern CSS features (Chrome 111+, Safari 16.4+, Firefox 128+).
+
 Dependencies (`pyproject.toml` is the single source of truth, `uv.lock` is
 committed):
 
