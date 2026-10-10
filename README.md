@@ -17,6 +17,7 @@ Order intake system for a family rice restaurant via Zalo, serverless on AWS.
 ## Architecture
 
 Planned: a single AWS SAM stack with Python AWS Lambda functions.
+Hosting (Planned): S3 + CloudFront, `/api/*` on the same origin (static SPA hosted in a private S3 bucket behind ONE CloudFront distribution, routing `/api/*` to the Lambda Function URL).
 See [docs/architecture.md](docs/architecture.md) (TBD) and the
 architecture decision records in [docs/adr/](docs/adr/).
 
@@ -35,7 +36,7 @@ functions/        Lambda function packages (each directory is an independent fun
   refresh_token/       OAuth token rotation entry point (scheduled maintenance)
 shared/           Shared code packaged into functions at build time (e.g. envelope.py)
 tests/unit/       Unit tests
-web/              Web front end (planned, empty)
+web/              Web frontend (React, TypeScript, Vite SPA scaffold)
 Makefile          Custom build recipes for SAM packaging (Metadata: BuildMethod: makefile)
 samconfig.toml    SAM CLI configuration for dev and prod environments
 template.yaml     AWS SAM template defining CloudFormation resources
@@ -46,6 +47,8 @@ template.yaml     AWS SAM template defining CloudFormation resources
 - [Git](https://git-scm.com/)
 - [uv](https://docs.astral.sh/uv/) (installs the Python version pinned in
   `.python-version` automatically)
+- [Node.js](https://nodejs.org/) (Active LTS, version 24 pinned in `web/.node-version`)
+- [npm](https://docs.npmjs.com/) (package manager bundled with Node.js, version >= 11)
 - [AWS CLI](https://aws.amazon.com/cli/) and
   [AWS SAM CLI](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/install-sam-cli.html):
   only needed for deployment
@@ -55,6 +58,7 @@ Windows PowerShell notes:
 - Install uv with
   `powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"`
   or `winget install --id=astral-sh.uv -e`, then open a new terminal.
+- Install Node.js LTS with `winget install OpenJS.NodeJS.LTS`.
 - Install the AWS tools with `winget install -e --id Amazon.AWSCLI` and
   `winget install -e --id Amazon.SAM-CLI`.
 - All commands in this README work unchanged in PowerShell. Line endings are
@@ -68,6 +72,10 @@ cd open-resto
 uv sync
 uv run pytest
 uv run prek install
+
+# Frontend dependencies
+npm --prefix web ci
+npm --prefix web test
 ```
 
 `uv sync` creates `.venv/` and installs the runtime and `dev` dependencies.
@@ -75,7 +83,7 @@ uv run prek install
 
 ## Development
 
-Common commands:
+Backend commands (Python):
 
 | Task       | Command                         |
 | ---------- | ------------------------------- |
@@ -85,6 +93,19 @@ Common commands:
 | Type-check | `uv run ty check`               |
 | Test       | `uv run pytest`                 |
 | All hooks  | `uv run prek run --all-files`   |
+
+Frontend commands (run from repository root with `--prefix web` or inside `web/`):
+
+| Task         | Command                             |
+| ------------ | ----------------------------------- |
+| Dev server   | `npm --prefix web run dev`          |
+| Lint         | `npm --prefix web run lint`         |
+| Format       | `npm --prefix web run format`       |
+| Format check | `npm --prefix web run format:check` |
+| Type-check   | `npm --prefix web run typecheck`    |
+| Test         | `npm --prefix web run test`         |
+| Build        | `npm --prefix web run build`        |
+| Preview      | `npm --prefix web run preview`      |
 
 Dependencies (`pyproject.toml` is the single source of truth, `uv.lock` is
 committed):
