@@ -39,17 +39,19 @@ def get_ssm_client() -> Any:
 def get_sqs_client() -> Any:
     """Return a cached boto3 SQS client with bounded latency.
 
-    Zalo expects a response within 2 seconds. boto3 cannot cancel a single call
-    like a .NET CancellationToken, so timeouts are bounded on the client and
-    retries are disabled: the worst case is ~1.5 s, after which the handler
-    returns 503 and lets Zalo redeliver.
+    Zalo expects a response within 2 seconds. Boto3 client retries are disabled
+    via total_max_attempts=1 (max_attempts in Config counts only retries, whereas
+    total_max_attempts=1 enforces exactly 1 initial attempt with 0 retries).
+    Worst-case latency is bounded to 0.5s connect + 1.0s read = 1.5s, allowing the
+    handler to fail-fast with 503 before Zalo times out and avoiding duplicate
+    message enqueuing if SQS received the message but the ACK was delayed.
     """
     return boto3.client(
         "sqs",
         config=Config(
             connect_timeout=0.5,
             read_timeout=1.0,
-            retries={"max_attempts": 1, "mode": "standard"},
+            retries={"total_max_attempts": 1, "mode": "standard"},
         ),
     )
 

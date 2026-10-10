@@ -1,6 +1,7 @@
 """Unit and integration tests for Zalo webhook Lambda handler."""
 
 import base64
+import hashlib
 import json
 import os
 from datetime import UTC, datetime, timedelta
@@ -159,7 +160,8 @@ def test_webhook_success_enqueues_envelope(
 
     sys_attrs = received.get("Attributes", {})
     assert sys_attrs.get("MessageGroupId") == "246845883529197922"
-    assert sys_attrs.get("MessageDeduplicationId") == "96d3cdf3af150460909"
+    expected_dedup = hashlib.sha256(b"user_send_text:96d3cdf3af150460909").hexdigest()
+    assert sys_attrs.get("MessageDeduplicationId") == expected_dedup
 
 
 def test_webhook_base64_encoded_body(
@@ -341,3 +343,53 @@ def test_webhook_queue_error_returns_503(
         )
         response = lambda_handler(event, None)
         assert response["statusCode"] == 503
+
+
+def test_webhook_event_without_msg_id_deduplicates_by_raw_body_hash(
+    test_infrastructure: dict[str, Any],
+) -> None:
+    sqs = test_infrastructure["sqs"]
+    queue_url = test_infrastructure["queue_url"]
+
+    # Payload with valid user_id but no message/msg_id
+    payload = {
+        "app_id": TEST_APP_ID,
+        "event_name": "follow",
+        "sender": {"id": "user_follow_123"},
+        "timestamp": str(int(datetime.now(tz=UTC).timestamp() * 1000)),
+    }
+    raw_body = json.dumps(payload, separators=(",", ":"))
+    sig = compute_signature(
+        TEST_APP_ID, raw_body, payload["timestamp"], TEST_SECRET_KEY
+    ).hex()
+    event = _build_furl_event(
+        body=raw_body,
+        method="POST",
+        signature_header=f"mac={sig}",
+    )
+
+    response = lambda_handler(event, None)
+    assert response["statusCode"] == 200
+
+    messages = sqs.receive_message(
+        QueueUrl=queue_url,
+        AttributeNames=["All"],
+    ).get("Messages", [])
+    assert len(messages) == 1
+
+    sys_attrs = messages[0].get("Attributes", {})
+    assert sys_attrs.get("MessageGroupId") == "user_follow_123"
+    expected_dedup = hashlib.sha256(raw_body.encode("utf-8")).hexdigest()
+    assert sys_attrs.get("MessageDeduplicationId") == expected_dedup
+
+
+def test_sqs_client_bounded_latency_and_disabled_retries(
+    test_infrastructure: dict[str, Any],
+) -> None:
+    client = get_sqs_client()
+    config = client.meta.config
+
+    assert config.connect_timeout == 0.5
+    assert config.read_timeout == 1.0
+    # Must enforce total_max_attempts == 1 to strictly disable retries (0 retries)
+    assert config.retries == {"total_max_attempts": 1, "mode": "standard"}

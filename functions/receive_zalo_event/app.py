@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import logging
 from datetime import UTC, datetime
 from typing import Any
@@ -151,6 +152,24 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
 
     try:
         sqs_client = get_sqs_client()
+        # Compute deterministic MessageDeduplicationId for SQS FIFO queue:
+        # 1. Why SHA-256 hash? SQS FIFO limits MessageDeduplicationId to 128 chars.
+        #    msg_id can be up to 256 chars; hashing guarantees bounded 64 hex chars.
+        # 2. Why prefix event_name? Prevents SQS from silently dropping different
+        #    event types (e.g. user_send_text vs user_seen_message) sharing msg_id.
+        # 3. Why fallback to raw_body? Events without msg_id (e.g. follow/unfollow)
+        #    still need deduplication across Zalo retries. Using raw_body ensures
+        #    identical hashes across retries, unlike the envelope MessageBody which
+        #    contains unique request_id and received_at_utc timestamps.
+        # 4. Note: SQS FIFO deduplication interval is 5 minutes. Downstream consumers
+        #    must still implement idempotency for retries arriving beyond 5 minutes.
+        dedup_source = (
+            f"{candidate.event_name}:{candidate.msg_id}"
+            if candidate.msg_id
+            else raw_body
+        )
+        dedup_id = hashlib.sha256(dedup_source.encode("utf-8")).hexdigest()
+
         send_params: dict[str, Any] = {
             "QueueUrl": queue_url,
             "MessageBody": envelope_json,
@@ -164,12 +183,9 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
                     "StringValue": candidate.app_id,
                 },
             },
+            "MessageGroupId": candidate.user_id,
+            "MessageDeduplicationId": dedup_id,
         }
-        if queue_url.endswith(".fifo"):
-            send_params["MessageGroupId"] = candidate.user_id
-            if candidate.msg_id:
-                send_params["MessageDeduplicationId"] = candidate.msg_id
-
         sqs_client.send_message(**send_params)
     except Exception:
         # Log exception stack trace but omit raw_body to avoid leaking PII/tokens
