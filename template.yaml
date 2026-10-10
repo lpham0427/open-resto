@@ -28,6 +28,8 @@ Parameters:
 Globals:
   Function:
     Runtime: python3.14
+    Architectures:
+      - arm64
     CodeUri: .
     MemorySize: 256
 
@@ -68,8 +70,6 @@ Resources:
     Metadata:
       BuildMethod: makefile
     Properties:
-      Architectures:
-        - arm64
       Description: Receives Zalo OA webhook events, verifies them and enqueues them into FIFO queue.
       Handler: receive_zalo_event.app.lambda_handler
       # Zalo expects a response within 2 s. Speed comes from keeping the handler

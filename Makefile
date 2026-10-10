@@ -30,7 +30,7 @@ build-ProcessOrderFunction:
 	@if command -v uv >/dev/null 2>&1; then \
 		uv export --frozen --only-group process_order --no-hashes --no-dev --no-emit-project -o $(ARTIFACTS_DIR)/requirements.txt; \
 		if grep -E -v '^[[:space:]]*(#|$$)' $(ARTIFACTS_DIR)/requirements.txt >/dev/null 2>&1; then \
-			uv pip install -r $(ARTIFACTS_DIR)/requirements.txt --target $(ARTIFACTS_DIR) --python-platform linux --python-version 3.14 --link-mode copy; \
+			uv pip install -r $(ARTIFACTS_DIR)/requirements.txt --target $(ARTIFACTS_DIR) --python-platform aarch64-manylinux_2_28 --python-version 3.14 --link-mode copy; \
 		fi; \
 		rm -f $(ARTIFACTS_DIR)/requirements.txt; \
 	fi
