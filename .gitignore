@@ -25,6 +25,15 @@ src/requirements.txt
 !.env.example
 *.pem
 
+# Web frontend
+node_modules/
+web/dist/
+web/coverage/
+*.tsbuildinfo
+web/.env
+web/.env.*
+!web/.env.example
+
 # Evaluation raw data
 evals/raw/
 
