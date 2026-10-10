@@ -9,19 +9,31 @@ import json
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
-from typing import Any
+from datetime import datetime
 
-MAX_FIELD_LENGTH = 256
+from shared.zalo.parser import (
+    _get_bounded_string,
+    _reject_duplicate_keys,
+    extract_msg_id,
+    extract_user_id,
+    parse_timestamp,
+)
+
+__all__ = [
+    "SIGNATURE_HEADER",
+    "SIGNATURE_PREFIX",
+    "ValidationErrors",
+    "WebhookCandidate",
+    "extract_signature",
+    "parse_candidate",
+    "parse_timestamp",
+]
+
 SIGNATURE_HEADER = "x-zevent-signature"
 SIGNATURE_PREFIX = "mac="
 
 # A SHA-256 digest is exactly 32 bytes, i.e. 64 hexadecimal characters.
 _SIGNATURE_PATTERN = re.compile(r"[0-9a-fA-F]{64}")
-_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
-_MAX_UNIX_MS = int(
-    (datetime.max.replace(tzinfo=UTC) - _EPOCH) / timedelta(milliseconds=1)
-)
 
 type ValidationErrors = dict[str, list[str]]
 
@@ -37,41 +49,6 @@ class WebhookCandidate:
     event_name: str
     user_id: str
     msg_id: str | None = None
-
-
-def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-    """Reject duplicate JSON keys.
-
-    `json.loads` silently keeps the last duplicate, which lets two parsers
-    disagree about the same payload (parser differential attacks).
-    """
-    result: dict[str, Any] = {}
-    for key, value in pairs:
-        if key in result:
-            raise ValueError(f"duplicate JSON key: {key}")
-        result[key] = value
-    return result
-
-
-def _get_bounded_string(payload: Mapping[str, Any], key: str) -> str | None:
-    value = payload.get(key)
-    if isinstance(value, str) and 0 < len(value) <= MAX_FIELD_LENGTH:
-        return value
-    return None
-
-
-def parse_timestamp(timestamp: str) -> datetime | None:
-    """Parse a positive Unix timestamp in milliseconds made of ASCII digits only."""
-    # str.isdigit() also accepts non-ASCII digits, so isascii() is required.
-    if not (timestamp.isascii() and timestamp.isdigit()):
-        return None
-    milliseconds = int(timestamp)
-    if milliseconds <= 0 or milliseconds > _MAX_UNIX_MS:
-        return None
-    try:
-        return _EPOCH + timedelta(milliseconds=milliseconds)
-    except OverflowError:
-        return None
 
 
 def extract_signature(headers: Mapping[str, str]) -> bytes | None:
@@ -93,37 +70,6 @@ def extract_signature(headers: Mapping[str, str]) -> bytes | None:
     if not _SIGNATURE_PATTERN.fullmatch(value):
         return None
     return bytes.fromhex(value)
-
-
-def extract_user_id(payload: Mapping[str, Any]) -> str | None:
-    """Extract bounded user ID from sender.id or user_id_by_app."""
-    sender_obj = payload.get("sender")
-    if isinstance(sender_obj, Mapping):
-        sender_id = sender_obj.get("id")
-        if isinstance(sender_id, str) and 0 < len(sender_id) <= MAX_FIELD_LENGTH:
-            return sender_id
-        if isinstance(sender_id, int) and sender_id > 0:
-            return str(sender_id)
-
-    user_id_by_app = payload.get("user_id_by_app")
-    if isinstance(user_id_by_app, str) and 0 < len(user_id_by_app) <= MAX_FIELD_LENGTH:
-        return user_id_by_app
-    if isinstance(user_id_by_app, int) and user_id_by_app > 0:
-        return str(user_id_by_app)
-
-    return None
-
-
-def extract_msg_id(payload: Mapping[str, Any]) -> str | None:
-    """Extract optional bounded message ID from message.msg_id for deduplication."""
-    msg_obj = payload.get("message")
-    if isinstance(msg_obj, Mapping):
-        raw_msg_id = msg_obj.get("msg_id")
-        if isinstance(raw_msg_id, str) and 0 < len(raw_msg_id) <= MAX_FIELD_LENGTH:
-            return raw_msg_id
-        if isinstance(raw_msg_id, int) and raw_msg_id > 0:
-            return str(raw_msg_id)
-    return None
 
 
 def parse_candidate(
