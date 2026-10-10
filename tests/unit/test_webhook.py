@@ -56,7 +56,7 @@ def test_infrastructure(aws_env: None):
 
         sqs = boto3.client("sqs", region_name=TEST_REGION)
         queue_res = sqs.create_queue(
-            QueueName="test-zalo-events-queue.fifo",
+            QueueName="test-order-events-queue.fifo",
             Attributes={
                 "FifoQueue": "true",
                 "ContentBasedDeduplication": "true",

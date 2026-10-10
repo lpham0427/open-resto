@@ -15,7 +15,7 @@ logger = Logger(service="process_order")
 def lambda_handler(
     event: dict[str, Any], context: LambdaContext | object
 ) -> dict[str, Any]:
-    """Process incoming SQS messages containing Zalo order events."""
+    """Process incoming SQS messages containing order events."""
     batch_item_failures: list[dict[str, str]] = []
 
     records = event.get("Records", [])

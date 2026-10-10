@@ -108,8 +108,9 @@ Workflow:
 ## Configuration and secrets
 
 - Environment variables:
-  - `SSM_PARAM_OA_SECRET_KEY`: SSM parameter name storing the Zalo OA secret key.
-  - `QUEUE_URL`: Target SQS FIFO Queue URL for webhook events.
+  - `ZALO_OA_SECRET_KEY_PARAMETER`: SSM parameter name storing the Zalo OA secret key.
+  - `ZALO_APP_ID`: Zalo application ID.
+  - `EVENTS_QUEUE_URL`: Target SQS FIFO Queue URL for order events.
 - Never commit secrets, credentials or private keys. The pre-commit hook runs
   `detect-private-key` as a safety net.
 - `.env` and `.env.*` files are ignored by Git; only `.env.example` may be

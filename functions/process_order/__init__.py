@@ -1,1 +1,1 @@
-"""Package for processing Zalo order events consumed from SQS FIFO queue."""
+"""Package for processing order events consumed from SQS FIFO queue."""

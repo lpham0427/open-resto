@@ -25,7 +25,7 @@ def get_oa_secret_key_param_name() -> str:
 
 
 def get_events_queue_url() -> str:
-    """Return the SQS queue URL for incoming Zalo events."""
+    """Return the SQS queue URL for incoming order events."""
     return os.environ.get("EVENTS_QUEUE_URL", "")
 
 

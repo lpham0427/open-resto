@@ -15,7 +15,7 @@
       "messageAttributes": {},
       "md5OfBody": "sample-md5",
       "eventSource": "aws:sqs",
-      "eventSourceARN": "arn:aws:sqs:ap-southeast-1:123456789012:open-resto-prod-zalo-events.fifo",
+      "eventSourceARN": "arn:aws:sqs:ap-southeast-1:123456789012:open-resto-prod-order-events.fifo",
       "awsRegion": "ap-southeast-1"
     }
   ]

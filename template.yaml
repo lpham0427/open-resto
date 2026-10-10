@@ -35,10 +35,10 @@ Resources:
   # ---------------------------------------------------------------------------
   # Queues
   # ---------------------------------------------------------------------------
-  ZaloEventsQueue:
+  OrderEventsQueue:
     Type: AWS::SQS::Queue
     Properties:
-      QueueName: !Sub "${AWS::StackName}-zalo-events.fifo"
+      QueueName: !Sub "${AWS::StackName}-order-events.fifo"
       FifoQueue: true
       ContentBasedDeduplication: true
       SqsManagedSseEnabled: true
@@ -46,14 +46,14 @@ Resources:
       # AWS recommends at least 6x the consumer function timeout (30 s).
       VisibilityTimeout: 180
       RedrivePolicy:
-        deadLetterTargetArn: !GetAtt ZaloEventsDLQ.Arn
+        deadLetterTargetArn: !GetAtt OrderEventsDLQ.Arn
         # AWS recommends at least 5 so throttled batches are not dead-lettered early.
         maxReceiveCount: 5
 
-  ZaloEventsDLQ:
+  OrderEventsDLQ:
     Type: AWS::SQS::Queue
     Properties:
-      QueueName: !Sub "${AWS::StackName}-zalo-events-dlq.fifo"
+      QueueName: !Sub "${AWS::StackName}-order-events-dlq.fifo"
       FifoQueue: true
       SqsManagedSseEnabled: true
       # Must outlive the source queue: a message keeps its original enqueue
@@ -84,10 +84,10 @@ Resources:
         Variables:
           ZALO_APP_ID: !Ref ZaloAppId
           ZALO_OA_SECRET_KEY_PARAMETER: !Ref ZaloOaSecretKeyParameterName
-          EVENTS_QUEUE_URL: !Ref ZaloEventsQueue
+          EVENTS_QUEUE_URL: !Ref OrderEventsQueue
       Policies:
         - SQSSendMessagePolicy:
-            QueueName: !GetAtt ZaloEventsQueue.QueueName
+            QueueName: !GetAtt OrderEventsQueue.QueueName
         - Statement:
             - Sid: ReadZaloOaSecretKey
               Effect: Allow
@@ -107,23 +107,23 @@ Resources:
       RetentionInDays: !Ref LogRetentionInDays
 
   # ---------------------------------------------------------------------------
-  # Worker: SQS FIFO -> process Zalo order events
+  # Worker: SQS FIFO -> process order events
   # ---------------------------------------------------------------------------
   ProcessOrderFunction:
     Type: AWS::Serverless::Function
     Metadata:
       BuildMethod: makefile
     Properties:
-      Description: Consumes Zalo events from SQS FIFO queue and processes orders.
+      Description: Consumes order events from SQS FIFO queue and processes orders.
       Handler: process_order.app.lambda_handler
       Timeout: 30
       LoggingConfig:
         LogGroup: !Ref ProcessOrderLogGroup
       Events:
-        ZaloEvents:
+        OrderEvents:
           Type: SQS
           Properties:
-            Queue: !GetAtt ZaloEventsQueue.Arn
+            Queue: !GetAtt OrderEventsQueue.Arn
             BatchSize: 10
             # The handler must return {"batchItemFailures": [{"itemIdentifier": <messageId>}]}
             # so only failed messages are retried, not the whole batch.
@@ -140,10 +140,10 @@ Outputs:
     Description: Paste this URL into the Zalo app settings as the webhook URL.
     Value: !GetAtt ReceiveZaloEventFunctionUrl.FunctionUrl
 
-  ZaloEventsQueueUrl:
-    Description: URL of the Zalo events queue.
-    Value: !Ref ZaloEventsQueue
+  OrderEventsQueueUrl:
+    Description: URL of the order events queue.
+    Value: !Ref OrderEventsQueue
 
-  ZaloEventsDLQUrl:
+  OrderEventsDLQUrl:
     Description: URL of the dead-letter queue; inspect it when events fail repeatedly.
-    Value: !Ref ZaloEventsDLQ
+    Value: !Ref OrderEventsDLQ
