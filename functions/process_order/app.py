@@ -6,7 +6,7 @@ from typing import Any
 
 from aws_lambda_powertools import Logger
 from aws_lambda_powertools.utilities.typing import LambdaContext
-from shared.envelope import ZaloWebhookEnvelope
+from shared.envelope import EventEnvelope
 
 logger = Logger(service="process_order")
 
@@ -25,7 +25,7 @@ def lambda_handler(
         message_id = record.get("messageId", "")
         try:
             body = record.get("body", "")
-            envelope = ZaloWebhookEnvelope.from_json(body)
+            envelope = EventEnvelope.from_json(body)
             logger.info(
                 "Processing event from request %s",
                 envelope.request_id,

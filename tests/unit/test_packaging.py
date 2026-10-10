@@ -134,6 +134,7 @@ def test_webhook_artifact_isolation(tmp_path: Path) -> None:
                 "import shared.envelope;"
                 "assert callable(receive_zalo_event.app.lambda_handler);"
                 "assert callable(receive_zalo_event.settings.get_oa_secret_key);"
+                "assert hasattr(shared.envelope, 'EventEnvelope');"
                 "assert hasattr(shared.envelope, 'ZaloWebhookEnvelope')"
             ),
         ],
@@ -169,6 +170,7 @@ def test_process_order_artifact_isolation(tmp_path: Path) -> None:
             (
                 "import process_order.app, shared.envelope;"
                 "assert callable(process_order.app.lambda_handler);"
+                "assert hasattr(shared.envelope, 'EventEnvelope');"
                 "assert hasattr(shared.envelope, 'ZaloWebhookEnvelope')"
             ),
         ],

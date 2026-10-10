@@ -8,7 +8,7 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
-from shared.envelope import ZaloWebhookEnvelope
+from shared.envelope import EventEnvelope
 
 from .freshness import WebhookFreshnessStatus, evaluate_freshness
 from .parser import parse_candidate
@@ -142,13 +142,22 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         logger.error("EVENTS_QUEUE_URL is not set. RequestId: %s", request_id)
         return {"statusCode": 500}
 
-    envelope = ZaloWebhookEnvelope.create(
+    envelope = EventEnvelope.create(
+        source="zalo",
         request_id=request_id,
-        received_at=received_at_utc,
         occurred_at=candidate.occurred_at,
         raw_payload=raw_body,
     )
     envelope_json = envelope.to_json()
+
+    # Guard: alert if payload approaches SQS 64 KiB billable request boundary
+    payload_size = len(envelope_json.encode("utf-8"))
+    if payload_size > 60 * 1024:
+        logger.warning(
+            "Large enqueue payload: %d bytes (>60 KiB). RequestId: %s",
+            payload_size,
+            request_id,
+        )
 
     try:
         sqs_client = get_sqs_client()
@@ -170,19 +179,12 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         )
         dedup_id = hashlib.sha256(dedup_source.encode("utf-8")).hexdigest()
 
+        # Omit custom MessageAttributes: SQS billable requests are charged per 64 KiB
+        # chunk including attributes. event_name and app_id are already in raw_payload
+        # or constant; removing redundant attributes minimizes payload footprint.
         send_params: dict[str, Any] = {
             "QueueUrl": queue_url,
             "MessageBody": envelope_json,
-            "MessageAttributes": {
-                "event_name": {
-                    "DataType": "String",
-                    "StringValue": candidate.event_name,
-                },
-                "app_id": {
-                    "DataType": "String",
-                    "StringValue": candidate.app_id,
-                },
-            },
             "MessageGroupId": candidate.user_id,
             "MessageDeduplicationId": dedup_id,
         }

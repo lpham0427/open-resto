@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from shared.envelope import ZaloWebhookEnvelope
+from shared.envelope import EventEnvelope
 
 from process_order.app import lambda_handler
 
@@ -23,27 +23,28 @@ class _DummyLambdaContext:
 
 def test_envelope_roundtrip() -> None:
     now = datetime(2026, 10, 9, 15, 30, 0, tzinfo=UTC)
-    envelope = ZaloWebhookEnvelope.create(
+    envelope = EventEnvelope.create(
+        source="zalo",
         request_id="req-12345",
-        received_at=now,
         occurred_at=now,
         raw_payload='{"event_name":"user_send_text"}',
     )
 
     serialized = envelope.to_json()
-    deserialized = ZaloWebhookEnvelope.from_json(serialized)
+    deserialized = EventEnvelope.from_json(serialized)
 
+    assert deserialized.source == "zalo"
     assert deserialized.request_id == "req-12345"
-    assert deserialized.received_at_utc == now.isoformat()
     assert deserialized.occurred_at_utc == now.isoformat()
     assert deserialized.raw_payload == '{"event_name":"user_send_text"}'
+    assert deserialized.schema_version == 1
 
 
 def test_process_order_success() -> None:
     now = datetime(2026, 10, 9, 15, 30, 0, tzinfo=UTC)
-    envelope = ZaloWebhookEnvelope.create(
+    envelope = EventEnvelope.create(
+        source="zalo",
         request_id="req-test-1",
-        received_at=now,
         occurred_at=now,
         raw_payload='{"event_name":"user_send_text","app_id":"123"}',
     )
@@ -64,9 +65,9 @@ def test_process_order_success() -> None:
 
 def test_process_order_partial_failure() -> None:
     now = datetime(2026, 10, 9, 15, 30, 0, tzinfo=UTC)
-    envelope = ZaloWebhookEnvelope.create(
+    envelope = EventEnvelope.create(
+        source="zalo",
         request_id="req-good",
-        received_at=now,
         occurred_at=now,
         raw_payload='{"event_name":"user_send_text"}',
     )

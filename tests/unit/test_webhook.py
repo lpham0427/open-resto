@@ -149,14 +149,13 @@ def test_webhook_success_enqueues_envelope(
     assert len(messages) == 1
     received = messages[0]
     envelope_data = json.loads(received["Body"])
+    assert envelope_data["source"] == "zalo"
     assert envelope_data["request_id"] == "req-abc-999"
     assert envelope_data["raw_payload"] == raw_body
-    assert "received_at_utc" in envelope_data
     assert envelope_data["occurred_at_utc"] is not None
-
-    attrs = received["MessageAttributes"]
-    assert attrs["event_name"]["StringValue"] == "user_send_text"
-    assert attrs["app_id"]["StringValue"] == TEST_APP_ID
+    assert envelope_data["schema_version"] == 1
+    assert "received_at_utc" not in envelope_data
+    assert "MessageAttributes" not in received
 
     sys_attrs = received.get("Attributes", {})
     assert sys_attrs.get("MessageGroupId") == "246845883529197922"
@@ -393,3 +392,26 @@ def test_sqs_client_bounded_latency_and_disabled_retries(
     assert config.read_timeout == 1.0
     # Must enforce total_max_attempts == 1 to strictly disable retries (0 retries)
     assert config.retries == {"total_max_attempts": 1, "mode": "standard"}
+
+
+def test_webhook_large_payload_logs_warning(
+    test_infrastructure: dict[str, Any],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    large_text = "x" * (61 * 1024)
+    payload = _make_fresh_payload()
+    payload["message"]["text"] = large_text
+    raw_body = json.dumps(payload, separators=(",", ":"))
+    sig = compute_signature(
+        TEST_APP_ID, raw_body, payload["timestamp"], TEST_SECRET_KEY
+    ).hex()
+    event = _build_furl_event(
+        body=raw_body,
+        method="POST",
+        signature_header=f"mac={sig}",
+    )
+
+    with caplog.at_level("WARNING"):
+        response = lambda_handler(event, None)
+        assert response["statusCode"] == 200
+        assert "Large enqueue payload" in caplog.text
